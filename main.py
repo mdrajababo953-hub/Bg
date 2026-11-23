@@ -1076,16 +1076,20 @@ def zahid_run_session(sess, gen_stop_event):
                         sock_chat = None
                         time.sleep(CHAT_RETRY_DELAY)
 
+                try:
+                    if sock_chat: sock_chat.close()
+                except: pass
+                sock_chat = None
+
                 # ৩) ১ সেকেন্ড বিরতি দিয়ে ২য় মেসেজ বক্স পাঠানো (GREETING_2)
                 msg2_sent = False
                 msg2_err = ""
                 if not RF and not gen_stop_event.is_set():
                     time.sleep(SECOND_MSG_DELAY)
-                    for _ in range(2):
+                    for _ in range(3):
                         if RF or gen_stop_event.is_set(): break
                         try:
-                            if not sock_chat:
-                                sock_chat = _connect_and_auth_chat(ip2, port2, auth, target_uid, chat_code, key, iv)
+                            sock_chat = _connect_and_auth_chat(ip2, port2, auth, target_uid, chat_code, key, iv)
                             pkt2 = xc4_send_squad_msg(GREETING_2, target_uid, key, iv, region=region)
                             _send_chat_and_check(sock_chat, pkt2)
                             msg2_sent = True
