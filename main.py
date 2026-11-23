@@ -22,10 +22,16 @@ RDT = .1
 RES = 20000
 OBV = "ob55"
 RF = False
-RAF = {"BD": "accounts.txt"}
+RAF = {
+    "BD": "accounts.txt",
+    "IND": "accounts_ind.txt",
+}
+TOKEN_FILES = {
+    "BD": "token.json",
+    "IND": "token_ind.json",
+}
 ADMIN_UID = "622534362"
 
-TOKEN_FILE = "token.json"
 TOKEN_WORKERS = 15
 TOKEN_MAX_RETRY = 10
 TOKEN_RETRY_DELAY = 2.0
@@ -51,28 +57,29 @@ verr = None
 host = "loginbp.ppmainecoonghj.com"
 active_count = 0
 
-GRANT_URL = "https://ffmconnect.ppmainecoonghj.com/api/v2/oauth/guest/token:grant"
+GRANT_URL = "https://100067.connect.garena.com/api/v2/oauth/guest/token:grant"
+HEX_KEY = "2ee44819e9b4598845141067b281621874d0d5d7af9d8f7e00c1e54715b7d1e3"
 
 # ================== Timing ==================
-STAY_TIME = 15.0             # সেকেন্ড: মোট ১৫ সেকেন্ড গ্রুপে থাকবে
+STAY_TIME = 15.0               # সেকেন্ড: মোট ১৫ সেকেন্ড গ্রুপে থাকবে
 CHAT_AUTH_WAIT   = 0.25
 CHAT_JOIN_WAIT   = 0.25
 CHAT_RETRY_DELAY = 0.15
-SECOND_MSG_DELAY = 1.0       # ১ম মেসেজের ১ সেকেন্ড পর ২য় মেসেজ পাঠাবে
-EMOTE_AFTER_MSG_WAIT = 0.20  # ২য় মেসেজের পর ইমোট মারার বিরতি
-JOIN_TIMEOUT = 1.5
+SECOND_MSG_DELAY = 1.0         # ১ম মেসেজের ১ সেকেন্ড পর ২য় মেসেজ পাঠাবে
+EMOTE_AFTER_MSG_WAIT = 0.20    # ২য় মেসেজের পর ইমোট মারার বিরতি
+EXIT_BEFORE_INV_WAIT = 0.35    # ExiT করার পর সোলো হতে ০.৩৫s অপেক্ষা
+INV_AFTER_WAIT = 0.25          # ইনভাইট পাঠানোর পর বিরতি
+JOIN_TIMEOUT = 2.5
 JOIN_REFRESH = 0.5
-CYCLE_RETRY_DELAY = 0.1
-JOIN_MAX_TRIES = 100
+CYCLE_RETRY_DELAY = 0.2
 AUTH_RETRY_DELAY = 3.0
 BOT_CRASH_RESTART_DELAY = 2.0
 
-# ================== Greeting, /s1 & Emote Config ==================
-S1_BADGE_VALUE = 1048576     # mahir.py এর /s1 ব্যাজ ভ্যালু
+# ================== Invite Badge, Greeting & 10 Evo Emotes ==================
+INVITE_BADGE_VALUE = 32768     # 32768 = আসল V-Badge (চাইলে 1048576 দিতে পারেন)
 
 GREETING_1 = "Hi, I am ARIYAN"
 
-# দ্বিতীয় মেসেজ বক্স (আপনি আপনার নিজের মতো লেখা বদলে নিতে পারবেন)
 GREETING_2 = (
     "[B][00BFFF]■ ARIYAN STORE ■\n"
     "[B][00BFFF]────────────────\n"
@@ -87,7 +94,22 @@ GREETING_2 = (
     "[B][00BFFF]────────────────"
 )
 
-EMOTE_ID = 909000063         # ← এখানে আপনার নিজের পছন্দের ইমোট আইডি বসিয়ে নিন
+# শুধু সেরা ১০টি Evo ইমোট ম্যাপ
+BASE_EMOTE_MAP = {
+    "ak_evo":     909000063,  # AK Evo
+    "scar_evo":   909000068,  # SCAR Evo
+    "mp40_evo":   909000075,  # MP40 Evo (Predatory Cobra)
+    "mp40_2":     909040010,  # MP40 Evo (Chromasonic)
+    "m1014_evo":  909000081,  # M1014 Evo
+    "xm8_evo":    909000085,  # XM8 Evo
+    "famas_evo":  909000090,  # Famas Evo
+    "ump_evo":    909000098,  # UMP Evo
+    "m1887_evo":  909035007,  # M1887 Evo
+    "groza_evo":  909041005,  # Groza Evo
+}
+
+EMOTE_MAP = dict(BASE_EMOTE_MAP)
+EMOTE_IDS = list(BASE_EMOTE_MAP.values())
 
 HR = {
     "User-Agent": "UnityPlayer/2018.4.12f1 (UnityWebRequest/1.0, libcurl/8.5.0-DEV)",
@@ -135,105 +157,67 @@ def zahid_remove_bot(b):
         connected_bots.pop(b, None)
 
 
+def region_pkt(pkt, region):
+    """xP.py এর 0519 প্যাকেটকে রিজিয়ন অনুযায়ী 0514 (IND), 0519 (BD), বা 0515 (Others) করে"""
+    if pkt and len(pkt) >= 2 and pkt[:2] == b'\x05\x19':
+        reg_l = str(region).lower()
+        if reg_l == "ind":
+            return b'\x05\x14' + pkt[2:]
+        elif reg_l != "bd":
+            return b'\x05\x15' + pkt[2:]
+    return pkt
+
+
+def pop_tcp_frames(buf):
+    """TCP বাফার থেকে একসাথে আসা সবগুলো প্যাকেট আলাদা করে বের করে"""
+    frames = []
+    while len(buf) >= 5:
+        pkt_type = buf[0]
+        pkt_len = struct.unpack(">I", buf[1:5])[0]
+        if pkt_len <= 0 or pkt_len > 200000:
+            del buf[0]
+            continue
+        if len(buf) < 5 + pkt_len:
+            break
+        payload = bytes(buf[5 : 5 + pkt_len])
+        del buf[: 5 + pkt_len]
+        frames.append((pkt_type, payload))
+    return frames
+
+
 # ================== Proto helpers ==================
-def zahid_find_proto_start(d):
-    if not d: return 0
-    for i, x in enumerate(d):
-        if x == 0x08: return i
-    return 0
-
-
-def zahid_read_varint(d, p):
-    v = 0; s = 0
-    while True:
-        if p >= len(d): raise ValueError("truncated")
-        b = d[p]; p += 1
-        v |= (b & 0x7F) << s
-        if not b & 0x80: return v, p
-        s += 7
-        if s > 70: raise ValueError("too long")
-
-
-def zahid_is_printable(t):
-    return all(c.isprintable() or c in "\r\n\t" for c in t)
-
-
-def zahid_put_field(r, k, v):
-    if k in r:
-        if type(r[k]) is not list: r[k] = [r[k]]
-        r[k].append(v)
-    else:
-        r[k] = v
-
-
-def zahid_proto_decode(d, depth=0):
-    r = {}; p = 0
-    try:
-        while p < len(d):
-            tag, p = zahid_read_varint(d, p)
-            f = tag >> 3; w = tag & 7
-            if f <= 0: raise ValueError("bad")
-            if w == 0:
-                v, p = zahid_read_varint(d, p)
-            elif w == 1:
-                if p + 8 > len(d): raise ValueError("trunc")
-                v = struct.unpack("<Q", d[p:p + 8])[0]; p += 8
-            elif w == 2:
-                ln, p = zahid_read_varint(d, p)
-                if p + ln > len(d): raise ValueError("trunc")
-                raw = d[p:p + ln]; p += ln
-                try:
-                    tx = raw.decode("utf-8")
-                    if zahid_is_printable(tx): v = tx
-                    else:
-                        n = zahid_proto_decode(raw, depth + 1)
-                        v = n if n else raw.hex()
-                except:
-                    try:
-                        n = zahid_proto_decode(raw, depth + 1)
-                        v = n if n else raw.hex()
-                    except:
-                        v = raw.hex()
-            elif w == 5:
-                if p + 4 > len(d): raise ValueError("trunc")
-                v = struct.unpack("<I", d[p:p + 4])[0]; p += 4
-            else:
-                raise ValueError("bad wire")
-            zahid_put_field(r, str(f), v)
-        return r
-    except:
-        return r
-
-
-def zahid_get_raw_field(d, tf):
-    try:
-        p = 0
-        while p < len(d):
-            tag, p = zahid_read_varint(d, p)
-            f = tag >> 3; w = tag & 7
-            if w == 0: v, p = zahid_read_varint(d, p)
-            elif w == 1:
-                if p + 8 > len(d): return None
-                v = d[p:p + 8]; p += 8
-            elif w == 2:
-                ln, p = zahid_read_varint(d, p)
-                if p + ln > len(d): return None
-                v = d[p:p + ln]; p += ln
-            elif w == 5:
-                if p + 4 > len(d): return None
-                v = d[p:p + 4]; p += 4
-            else:
-                return None
-            if f == tf: return v
-        return None
-    except:
-        return None
-
-
-def zahid_to_text(v):
-    if type(v) is str: return v
-    if type(v) is bytes: return v.decode("utf-8", errors="ignore")
-    return str(v)
+def _extract_raw_pb(data: bytes) -> dict:
+    """কাজ করা মেজর-লগইন ও গেট-লগইন প্রোটোবাফ পার্সার"""
+    res, off, n = {}, 0, len(data)
+    while off < n:
+        hdr, sh = 0, 0
+        while off < n:
+            b = data[off]; off += 1; hdr |= (b & 0x7F) << sh
+            if not (b & 0x80): break
+            sh += 7
+        fn, wt = hdr >> 3, hdr & 0x7
+        if wt == 0:
+            v, sh = 0, 0
+            while off < n:
+                b = data[off]; off += 1; v |= (b & 0x7F) << sh
+                if not (b & 0x80): break
+                sh += 7
+            res[fn] = v
+        elif wt == 2:
+            ln, sh = 0, 0
+            while off < n:
+                b = data[off]; off += 1; ln |= (b & 0x7F) << sh
+                if not (b & 0x80): break
+                sh += 7
+            if off + ln > n: break
+            res[fn] = data[off:off + ln]; off += ln
+        elif wt == 1:
+            off += 8
+        elif wt == 5:
+            off += 4
+        else:
+            break
+    return res
 
 
 def zahid_varint_encode(v):
@@ -269,14 +253,12 @@ def zahid_proto_encode(fields):
 
 # ================== xC4.py / mahir.py হুবহু প্যাকেট জেনারেটর ==================
 def xc4_generate_pk(pk_bytes, header_hex, key, iv):
-    """xC4.py এর GeneRaTePk এর হুবহু রূপ"""
     enc = AES.new(key, AES.MODE_CBC, iv).encrypt(pad(pk_bytes, 16))
     length_hex = len(enc).to_bytes(4, "big").hex()
     return bytes.fromhex(header_hex + length_hex) + enc
 
 
 def xc4_auth_chat(owner_uid, chat_code, key, iv):
-    """xC4.py এর AutH_Chat(3, OwNer_UiD, CHaT_CoDe, key, iv) এর হুবহু রূপ (1215)"""
     fields = {
         1: 3,
         2: {
@@ -290,7 +272,6 @@ def xc4_auth_chat(owner_uid, chat_code, key, iv):
 
 
 def xc4_send_squad_msg(msg_text, owner_uid, key, iv, region="BD"):
-    """xC4.py এর xSEndMsgsQ(Msg, id, K, V, region) এর হুবহু রূপ (080112 + 1201)"""
     avatar = random.choice(AVATAR_LIST)
     fields = {
         1: int(owner_uid),
@@ -339,7 +320,6 @@ def xc4_send_squad_msg(msg_text, owner_uid, key, iv, region="BD"):
 
 
 def xc4_emote_pkt(bot_uid, emote_id, key, iv, region="BD"):
-    """mahir.py এর Emote_k(TarGeT, idT, K, V, region) এর হুবহু রূপ (বট নিজে ইমোট করবে)"""
     b_uid = int(bot_uid)
     fields = {
         1: 21,
@@ -364,53 +344,40 @@ def xc4_emote_pkt(bot_uid, emote_id, key, iv, region="BD"):
     return xc4_generate_pk(raw, p_type, key, iv)
 
 
-def xc4_s1_badge_pkt(target_uid, key, iv, region="BD", badge_value=S1_BADGE_VALUE):
-    """mahir.py এর /s1 (request_join_with_badge, badge=1048576) এর হুবহু রূপ"""
+def xc4_perfect_invite_pkt(bot_uid, target_uid, key, iv, region="BD", badge_value=INVITE_BADGE_VALUE):
+    """xP.py (yasser_SendInv OB55) অনুযায়ী ১০০% পারফেক্ট V-Badge / Join Request প্যাকেট"""
     reg_up = str(region).upper()
+    b_uid = int(bot_uid)
+    t_uid = int(target_uid)
     fields = {
         1: 33,
         2: {
-            1: int(target_uid),
+            1: t_uid,
             2: reg_up,
             3: 1,
             4: 1,
-            5: bytes([1, 7, 9, 10, 11, 18, 25, 26, 32]),
-            6: "[C][B][FF0000] ARIYAN",
+            6: "[C][B][FF0000]ARIYAN",
             7: 330,
             8: 1000,
+            9: 100,
             10: reg_up,
-            11: bytes([49, 97, 99, 52, 98, 56, 48, 101, 99, 102, 48, 52, 55, 56,
-                       97, 52, 52, 50, 48, 51, 98, 102, 56, 102, 97, 99, 54, 49, 50, 48, 102, 53]),
             12: 1,
-            13: int(target_uid),
-            14: {
-                1: 2203434355,
+            13: t_uid,
+            16: 1,
+            17: {2: 159, 4: "y[WW", 6: 11, 8: "1.118.1", 9: 3, 10: 1},
+            18: 306,
+            19: 18,
+            24: random.choice(AVATAR_LIST),
+            26: {},
+            27: {1: 11, 2: b_uid, 3: 999},
+            28: {},
+            31: {1: 1, 2: int(badge_value)},
+            32: int(badge_value),
+            34: {
+                1: b_uid,
                 2: 8,
                 3: b"\x10\x15\x08\x0a\x0b\x13\x0c\x0f\x11\x04\x07\x02\x03\x0d\x0e\x12\x01\x05\x06",
             },
-            16: 1,
-            17: 1,
-            18: 312,
-            19: 46,
-            23: bytes([16, 1, 24, 1]),
-            24: random.choice(AVATAR_LIST),
-            26: "",
-            28: "",
-            31: {
-                1: 1,
-                2: int(badge_value),
-            },
-            32: int(badge_value),
-            34: {
-                1: int(target_uid),
-                2: 8,
-                3: bytes([15, 6, 21, 8, 10, 11, 19, 12, 17, 4, 14, 20, 7, 2, 1, 5, 16, 3, 13, 18]),
-            },
-        },
-        10: "en",
-        13: {
-            2: 1,
-            3: 1,
         },
     }
     reg_l = str(region).lower()
@@ -430,28 +397,26 @@ def zahid_update_version():
     global login_url, ob, verr, host
     try:
         from google_play_scraper import app as gp
-        d = gp("com.dts.freefireth", lang="en", country="ME")
+        d = gp("com.dts.freefireth", lang="hi", country="id")
         version = d["version"]
     except Exception:
-        version = "1.132.1"
+        version = "1.132.9"
     try:
         x = requests.get(
             "https://version.ggwhitehawk.com/live/ver.php"
             f"?version={version}&lang=en&device=android&channel=android"
-            f"&appsttore=googleplay&region=en&whitelist_version=1.3.0"
-            f"&whitelist_sp_version=1.0.0&device_name=google%20G011A"
-            f"&device_CPU=ARMv7%20VFPv3%20NEON%20VMH"
-            f"&device_GPU=Adreno%20(TM)%20640&device_mem=1993",
+            f"&appstore=googleplay&region=BD&whitelist_version=1.3.0"
+            f"&whitelist_sp_version=1.0.0",
             timeout=10,
         ).json()
         login_url = x["server_url"]
-        ob = x["latest_release_version"]
-        verr = x["remote_version"]
+        ob = x.get("latest_release_version") or "OB55"
+        verr = x.get("remote_version") or "1.134.14"
         host = login_url.split("https://", 1)[1].split("/", 1)[0]
     except Exception:
         login_url = LOGIN_SERVERS[0]
         ob = "OB55"
-        verr = version
+        verr = "1.134.14"
         host = "loginbp.ppmainecoonghj.com"
     return login_url, ob, verr
 
@@ -474,29 +439,21 @@ def zahid_build_login_payload(open_id, access_token, region="BD"):
     except Exception:
         server_time_str = str(datetime.now())[:-7]
 
-    def _get_ip():
-        for u in ("https://api.ipify.org", "https://ifconfig.me/ip", "https://ipinfo.io/ip"):
-            try:
-                rr = requests.get(u, timeout=3, verify=False)
-                ip = rr.text.strip()
-                if ip and ip.count(".") == 3: return ip
-            except Exception:
-                continue
-        return "59.152.5.188"
-
+    reg = str(region or "BD").upper()
+    c_ver = verr or "1.134.14"
     P = {}
 
-    if region == "IND":
-        P[3]=server_time_str; P[4]="free fire"; P[5]=1; P[7]="1.134.14"
+    if reg in ("IND", "IN"):
+        P[3]=server_time_str; P[4]="free fire"; P[5]=1; P[7]=c_ver
         P[8]="Android OS 14 / API-34 (UP1A.231005.007/E156BXXS6AYD4)"
         P[9]="Handheld"; P[10]="airtel"; P[11]="CarrierDataNetwork"
         P[12]=2340; P[13]=1080; P[14]="295"
         P[15]="ARM64 FP ASIMD AES | 2200 | 8"; P[16]=5586
         P[17]="Mali-G57 MC2"; P[18]="OpenGL ES 3.2 v1.r38p1"
         P[19]="Google|f4d8aefb-7549-4778-a92b-2ed885bf9ec4"
-        P[20]=_get_ip(); P[21]="en"; P[22]=open_id; P[23]="4"
+        P[20]="27.61.46.111"; P[21]="en"; P[22]=str(open_id); P[23]="4"
         P[24]="Handheld"; P[25]="samsung SM-A155F"; P[26]="IND"
-        P[29]=access_token; P[30]=1; P[41]="airtel"; P[42]="4G"
+        P[29]=str(access_token); P[30]=1; P[41]="airtel"; P[42]="4G"
         P[57]="7428b253defc164018c604a1ebbfebdf"
         P[60]=108009; P[61]=3859; P[62]=5023
         P[64]=3987; P[65]=108009; P[66]=3987; P[67]=108009
@@ -512,39 +469,8 @@ def zahid_build_login_payload(open_id, access_token, region="BD"):
         P[97]=1; P[99]="4"; P[100]="4"; P[104]=11921; P[105]=1
         P[106]="https://dl-tata.freefireind.in/live/ABHotUpdates/|https://core-tata.freefireind.in/live/ABHotUpdates/|dff941d41e6e3a9e76f05ed71fdc8d87"
         P[107]="1.6168622e0868ddbd"
-
-    elif region == "ME":
-        P[3]=server_time_str; P[4]="free fire"; P[5]=1; P[7]="1.134.14"
-        P[8]="Android OS 15 / API-35 (AP3A.240905.015.A2/185014)"
-        P[9]="Handheld"; P[10]="TUNTEL"; P[11]="WIFI"
-        P[12]=1600; P[13]=719; P[14]="234"
-        P[15]="ARM64 FP ASIMD AES | 1820 | 8"; P[16]=2798
-        P[17]="Mali-G57"
-        P[18]="OpenGL ES 3.2 v1.r49p1-04eac0.2848c17a2fd4e9340e06555168eaa3c9"
-        P[19]="Google|f744e396-5694-4e65-995d-97a958f2bd1f"
-        P[20]=_get_ip(); P[21]="en"; P[22]=open_id; P[23]="4"
-        P[24]="Handheld"; P[25]="INFINIX Infinix X6725"; P[26]="ME"
-        P[29]=access_token; P[30]=1; P[41]="TUNTEL"; P[42]="WIFI"
-        P[57]="7428b253defc164018c604a1ebbfebdf"
-        P[60]=49973; P[61]=11338; P[62]=854
-        P[64]=11466; P[65]=49973; P[66]=11466; P[67]=49973
-        P[73]=2
-        P[74]="/data/app/~~lHFxTCCbupG2QVJmsURtZw==/com.dts.freefireth-N3aCHpHNXpdxjD80uIIbww==/lib/arm64"
-        P[76]=1
-        P[77]="b8e0cd5e295eee42f5860d3c86e483dd|/data/app/~~lHFxTCCbupG2QVJmsURtZw==/com.dts.freefireth-N3aCHpHNXpdxjD80uIIbww==/base.apk"
-        P[78]=3; P[79]=2; P[81]="64"; P[83]="2019121229"
-        P[85]=3; P[86]="OpenGLES2"; P[87]=8191; P[88]=4
-        P[92]=15078; P[93]="android"
-        P[94]="KqsHTx3+QOmBRR1WKvaWewlcpqJBfjki+PPHQoQG8+0yV+Uos7gUFFjHMQ/e7u6han6Fl77r7c3vMN3p8UbKgN+nfycQCgwBmWgBzomx2gj84c+p"
-        P[95]=111207; P[96]='{"cur_rate":[90,60,120],"support_etc2":false}'
-        P[97]=1; P[99]="4"; P[100]="4"
-        P[102]="\x17]ENWU\x0eR5"
-        P[104]=52882; P[105]=1
-        P[106]="https://dl.ak.freefiremobile.com/live/ABHotUpdates/|https://core-ak.freefiremobile.com/live/ABHotUpdates/|6b2078db9d22dd98f8e9386a39af8462"
-        P[107]="c8e41b7a93f02d56e1a94c7b8203f5d1"
-
-    else:  # BD default
-        P[3]=server_time_str; P[4]="free fire"; P[5]=1; P[7]="1.134.14"
+    else:
+        P[3]=server_time_str; P[4]="free fire"; P[5]=1; P[7]=c_ver
         P[8]="Android OS 14 / API-34 (UP1A.231005.007/V816.0.15.0.UNQMIXM)"
         P[9]="Handheld"; P[10]="Grameenphone"; P[11]="CarrierDataNetwork"
         P[12]=1666; P[13]=750; P[14]="352"
@@ -552,9 +478,9 @@ def zahid_build_login_payload(open_id, access_token, region="BD"):
         P[17]="Mali-G57 MC2"
         P[18]="OpenGL ES 3.2 v1.r32p1-01eac0.0a0b917d9265b4c01be9925306306139"
         P[19]="Google|9cc73f7a-91f6-40f6-87ec-5b67e597eb8c"
-        P[20]=_get_ip(); P[21]="en"; P[22]=open_id; P[23]="8"
-        P[24]="Handheld"; P[25]="Xiaomi 2312DRAABI"; P[26]="BD"
-        P[29]=access_token; P[30]=1; P[41]="Grameenphone"; P[42]="Cellular"
+        P[20]="59.152.5.188"; P[21]="en"; P[22]=str(open_id); P[23]="8"
+        P[24]="Handheld"; P[25]="Xiaomi 2312DRAABI"; P[26]=reg
+        P[29]=str(access_token); P[30]=1; P[41]="Grameenphone"; P[42]="Cellular"
         P[57]="7428b253defc164018c604a1ebbfebdf"
         P[60]=109685; P[61]=58294; P[62]=797; P[63]=18000
         P[64]=58818; P[65]=109685; P[66]=58818; P[67]=109685
@@ -578,62 +504,92 @@ def zahid_build_login_payload(open_id, access_token, region="BD"):
     return AES.new(zahid_key, AES.MODE_CBC, zahid_iv).encrypt(pad(proto_encoded, 16))
 
 
-def zahid_build_auth_token(uid, token, ts, key, iv, mode="online"):
-    ah = f"{int(uid):x}"
-    if len(ah) > 16: raise ValueError("too long")
-    ah = ah.zfill(16)
-    enc = AES.new(key, AES.MODE_CBC, iv).encrypt(pad(token.encode(), 16)).hex()
-    th = f"{int(ts):08x}"
-    tsz = (len(enc) // 2).to_bytes(4, "big").hex()
+# ================== ২ সার্ভারের সঠিক Auth Token (BD: 7319/6d19 | IND: 7314/6d14) ==================
+def zahid_build_auth_token(uid, token, ts, key, iv, mode="online", region="BD"):
+    reg = str(region or "BD").upper()
     if mode == "chat":
-        return f"9015{ah}{th}{tsz}{enc}"
+        pfx = "6d19" if reg == "BD" else ("6d14" if reg == "IND" else "6d15")
+        ct = AES.new(key, AES.MODE_CBC, iv).encrypt(pad(token.encode("utf-8"), AES.block_size))
+        return (
+            bytes.fromhex(pfx)
+            + int(uid).to_bytes(8, "big")
+            + int(ts).to_bytes(4, "big")
+            + len(ct).to_bytes(4, "big")
+            + ct
+        ).hex()
     else:
-        return f"9015{ah}{th}00000000{tsz}{enc}"
+        pfx = "7319" if reg == "BD" else ("7314" if reg == "IND" else "7315")
+        ct = AES.new(key, AES.MODE_CBC, iv).encrypt(pad(token.encode("utf-8"), AES.block_size))
+        return (
+            bytes.fromhex(pfx)
+            + int(uid).to_bytes(8, "big")
+            + int(ts).to_bytes(4, "big")
+            + b"\x00\x00\x00\x00"
+            + len(ct).to_bytes(4, "big")
+            + ct
+        ).hex()
 
 
-def zahid_decrypt_major_login(resp):
+def zahid_decrypt_major_login(raw):
     class A: pass
-    a = A()
-    ld = zahid_proto_decode(resp)
-    if not ld: return None
-    au = ld.get("1")
-    if type(au) is list: au = au[0]
-    if au is None or not isinstance(au, int) or au < 1000000: return None
-    tb = ld.get("8")
-    if type(tb) is list: tb = tb[0]
-    if not isinstance(tb, (str, bytes)): return None
-    tok = zahid_to_text(tb)
-    if not tok.startswith("eyJ"): return None
-    ub = ld.get("10")
-    if type(ub) is list: ub = ub[0]
-    url = zahid_to_text(ub) if ub else None
-    if not url: return None
-    ts = ld.get("21")
-    if type(ts) is list: ts = ts[0]
-    if not isinstance(ts, int): return None
-    kb = zahid_get_raw_field(resp, 22)
-    ib = zahid_get_raw_field(resp, 23)
-    if not kb or not ib: return None
-    a.token = tok; a.account_uid = au; a.key = kb; a.iv = ib
-    a.timestamp = ts; a.url = url
-    return a
+    if not raw or len(raw) <= 64:
+        return None
+    offs = ([64, 0] if raw[0] != 0x0a else [0, 64]) + [48, 32, 80, 16, 128, 8, 96]
+    for off in offs:
+        if off >= len(raw):
+            continue
+        rf = _extract_raw_pb(raw[off:])
+        k_b = rf.get(22) or rf.get(24) or rf.get(6)
+        v_b = rf.get(23) or rf.get(25) or rf.get(7)
+        if 8 in rf and isinstance(k_b, bytes) and len(k_b) == 16 and isinstance(v_b, bytes) and len(v_b) == 16:
+            tok = rf[8].decode("utf-8", "ignore")
+            if not tok.startswith("eyJ"):
+                continue
+            au = rf.get(1)
+            if not isinstance(au, int) or au < 1000000:
+                continue
+            a = A()
+            a.token = tok
+            a.account_uid = au
+            a.region = rf.get(2, b"BD").decode("utf-8", "ignore")
+            a.url = rf.get(10, b"").decode("utf-8", "ignore")
+            a.timestamp = rf.get(21, int(time.time()))
+            a.key = k_b
+            a.iv = v_b
+            return a
+    return None
 
 
-def zahid_decrypt_login_data(data):
+def zahid_decrypt_login_data(raw):
     class P: pass
-    p = P()
-    pd = zahid_proto_decode(data)
-    if not pd: return None
-    ob_ = pd.get("14")
-    if type(ob_) is list: ob_ = ob_[0]
-    op = zahid_to_text(ob_) if ob_ else None
-    cb = pd.get("32")
-    if type(cb) is list: cb = cb[0]
-    cp_ = zahid_to_text(cb) if cb else None
-    if not op or not cp_: return None
-    p.Online_IP_Port = op; p.AccountIP_Port = cp_
-    p.Clan_ID = None; p.Clan_Compiled_Data = b''; p.AccountName = "Unknown"
-    return p
+    if not raw:
+        return None
+    for off in [0, 64, 48, 32, 80, 16, 128, 8, 96]:
+        if off >= len(raw):
+            continue
+        try:
+            parsed = Parser().parse(raw[off:])
+            d = {}
+            for res in parsed:
+                if res.wire_type in ("varint", "string", "bytes"):
+                    d[res.field] = res.data
+            if 14 in d and isinstance(d[14], str) and ":" in d[14] and 32 in d and isinstance(d[32], str) and ":" in d[32]:
+                p = P()
+                p.Online_IP_Port = d[14]
+                p.AccountIP_Port = d[32]
+                return p
+        except Exception:
+            pass
+        rf = _extract_raw_pb(raw[off:])
+        if 14 in rf and isinstance(rf[14], bytes) and 32 in rf and isinstance(rf[32], bytes):
+            op = rf[14].decode("utf-8", "ignore")
+            cp_ = rf[32].decode("utf-8", "ignore")
+            if ":" in op and ":" in cp_:
+                p = P()
+                p.Online_IP_Port = op
+                p.AccountIP_Port = cp_
+                return p
+    return None
 
 
 api_sem = threading.Semaphore(10)
@@ -642,28 +598,27 @@ api_sem = threading.Semaphore(10)
 def zahid_guest_access(uid, pw):
     with api_sem:
         headers = {
-            'User-Agent': "GarenaMSDK/4.0.44(RMX5070 ;Android 14;en;GB;app 1.132.1 2019121229;)",
-            'Accept': "application/json",
-            'Content-Type': "application/json; charset=utf-8",
-            'Accept-Encoding': "gzip",
-            'Connection': "Keep-Alive",
+            "Host": "100067.connect.garena.com",
+            "User-Agent": "GarenaMSDK/4.0.19P4(G011A ;Android 13;en;IN;)",
+            "Content-Type": "application/json",
         }
         data = {
             "client_id": 100067,
-            "client_secret": "2ee44819e9b4598845141067b281621874d0d5d7af9d8f7e00c1e54715b7d1e3",
+            "client_secret": HEX_KEY,
             "client_type": 2,
-            "device_id": f"02-{uuid.uuid4()}",
-            "password": pw,
+            "password": str(pw).strip(),
             "response_type": "token",
-            "uid": int(uid),
+            "uid": int(str(uid).strip()),
         }
         try:
             r = requests.post(GRANT_URL, json=data, headers=headers, timeout=20, verify=False)
-            if r.status_code != 200: return None, None
+            if r.status_code != 200:
+                return None, None
             result = r.json().get("data", {})
             oid = result.get("open_id")
             atk = result.get("access_token")
-            if not oid or not atk: return None, None
+            if not oid or not atk:
+                return None, None
             return oid, atk
         except Exception:
             return None, None
@@ -674,54 +629,57 @@ def zahid_major_login(payload):
     ut = [login_url] + [s for s in LOGIN_SERVERS if s != login_url]
     seen = set()
     ut = [x for x in ut if not (x in seen or seen.add(x))]
+    req_h = {
+        "User-Agent": "UnityPlayer/2018.4.12f1 (UnityWebRequest/1.0, libcurl/8.5.0-DEV)",
+        "Accept": "*/*",
+        "Accept-Encoding": "deflate, gzip",
+        "X-GA-SV": str(int(time.time())),
+        "Authorization": "Bearer ",
+        "X-GA": "v1 1",
+        "ReleaseVersion": str(ob or "OB55"),
+        "Content-Type": "application/x-www-form-urlencoded",
+        "X-Unity-Version": "2018.4.12f1",
+    }
     for base in ut:
         try:
-            try:
-                th = base.split("https://", 1)[1].split("/", 1)[0]
-                socket.gethostbyname(th)
-            except:
-                continue
             u = f"{base.rstrip('/')}/MajorLogin"
-            r = requests.post(u, data=payload, headers=HR, timeout=20, verify=False)
-            if r.status_code in (200, 201):
-                body = r.content
-                start = zahid_find_proto_start(body)
-                trimmed = body[start:]
-                if len(trimmed) < 200: return None
-                if trimmed:
-                    login_url = base
-                    return trimmed
-        except:
+            r = requests.post(u, data=payload, headers=req_h, timeout=20, verify=False)
+            if r.status_code in (200, 201) and len(r.content) > 64:
+                login_url = base
+                return r.content
+        except Exception:
             continue
     return None
 
 
 def zahid_get_login_data(url, payload, token):
-    headers = HR.copy()
-    headers["Authorization"] = f"Bearer {token}"
-    ut = [url] + [s for s in LOGIN_SERVERS if s != url]
-    seen = set()
-    ut = [x for x in ut if not (x in seen or seen.add(x))]
-    for base in ut:
-        try:
-            try:
-                th = base.split("https://", 1)[1].split("/", 1)[0]
-                socket.gethostbyname(th)
-            except:
-                continue
-            u = f"{base.rstrip('/')}/GetLoginData"
-            r = requests.post(u, data=payload, headers=headers, timeout=20, verify=False)
-            if r.status_code in (200, 201):
-                body = r.content
-                start = zahid_find_proto_start(body)
-                trimmed = body[start:]
-                if trimmed: return trimmed
-        except:
-            continue
+    if not url.startswith(("http://", "https://")):
+        url = "https://" + url
+    headers = {
+        "Accept": "*/*",
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/x-www-form-urlencoded",
+        "ReleaseVersion": str(ob or "OB55"),
+        "User-Agent": "UnityPlayer/2018.4.12f1",
+        "X-GA": "v1 1",
+        "X-GA-SV": str(int(time.time())),
+        "X-Unity-Version": "2018.4.12f1",
+    }
+    try:
+        u = f"{url.rstrip('/')}/GetLoginData"
+        r = requests.post(u, data=payload, headers=headers, timeout=20, verify=False)
+        if r.status_code in (200, 201) and r.content:
+            return r.content
+    except Exception:
+        pass
     return None
 
 
-# ================== Token.json I/O & Validation ==================
+# ================== Token.json / Token_ind.json I/O & Validation ==================
+def get_token_file(region):
+    return TOKEN_FILES.get(str(region).upper(), "token.json")
+
+
 def zahid_session_to_json(sess):
     return {
         'uid': str(sess['uid']),
@@ -758,7 +716,8 @@ def zahid_json_to_session(item, password=None):
     }
 
 
-def zahid_load_saved_tokens(path=TOKEN_FILE):
+def zahid_load_saved_tokens(region):
+    path = get_token_file(region)
     saved = {}
     if not os.path.exists(path):
         return saved
@@ -777,7 +736,8 @@ def zahid_load_saved_tokens(path=TOKEN_FILE):
     return saved
 
 
-def zahid_upsert_single_token(sess, path=TOKEN_FILE):
+def zahid_upsert_single_token(sess):
+    path = get_token_file(sess.get('region', 'BD'))
     with lock:
         data = {'saved_at': datetime.now().isoformat(), 'count': 0, 'sessions': []}
         if os.path.exists(path):
@@ -814,6 +774,10 @@ def _is_jwt_expired(token_str, buffer_sec=60):
 
 
 def zahid_test_session_online(sess):
+    reg = str(sess.get('region', 'BD')).upper()
+    expected_pfx = "7319" if reg == "BD" else ("7314" if reg == "IND" else "7315")
+    if not str(sess.get('auth_online', '')).startswith(expected_pfx):
+        return False
     if _is_jwt_expired(sess.get('token', '')):
         return False
 
@@ -831,7 +795,7 @@ def zahid_test_session_online(sess):
                 return False
         except socket.timeout:
             pass
-        s.sendall(send_keep_alive(sess['key'], sess['iv']))
+        s.sendall(region_pkt(send_keep_alive(sess['key'], sess['iv']), reg))
         return True
     except Exception:
         return False
@@ -844,6 +808,7 @@ def zahid_test_session_online(sess):
 
 # ================== PHASE 1: Token Builder ==================
 def zahid_build_session(uid, password, region):
+    reg_hint = str(region or "BD").upper()
     for attempt in range(TOKEN_MAX_RETRY):
         try:
             oid, atk = zahid_guest_access(uid, password)
@@ -851,7 +816,7 @@ def zahid_build_session(uid, password, region):
                 time.sleep(TOKEN_RETRY_DELAY)
                 continue
 
-            pyl = zahid_build_login_payload(oid, atk, region=region)
+            pyl = zahid_build_login_payload(oid, atk, region=reg_hint)
             resp = zahid_major_login(pyl)
             if not resp:
                 time.sleep(TOKEN_RETRY_DELAY)
@@ -862,8 +827,12 @@ def zahid_build_session(uid, password, region):
                 time.sleep(TOKEN_RETRY_DELAY)
                 continue
 
-            url = ad.url.rstrip("/")
-            ld = zahid_get_login_data(url, pyl, ad.token)
+            real_reg = (ad.region or reg_hint).upper()
+            target_url = ad.url or (
+                "https://client.ind.freefiremobile.com" if real_reg == "IND"
+                else "https://clientbp.ppmainecoonghj.com"
+            )
+            ld = zahid_get_login_data(target_url, pyl, ad.token)
             if not ld:
                 time.sleep(TOKEN_RETRY_DELAY)
                 continue
@@ -882,13 +851,13 @@ def zahid_build_session(uid, password, region):
             oip, oport = op.split(":")
             cip, cport = cp_.split(":")
 
-            ac = zahid_build_auth_token(int(ad.account_uid), ad.token, int(ad.timestamp), ad.key, ad.iv, mode="chat")
-            ao = zahid_build_auth_token(int(ad.account_uid), ad.token, int(ad.timestamp), ad.key, ad.iv, mode="online")
+            ac = zahid_build_auth_token(int(ad.account_uid), ad.token, int(ad.timestamp), ad.key, ad.iv, mode="chat", region=real_reg)
+            ao = zahid_build_auth_token(int(ad.account_uid), ad.token, int(ad.timestamp), ad.key, ad.iv, mode="online", region=real_reg)
 
             return {
                 'uid': str(uid),
                 'password': password,
-                'region': region,
+                'region': real_reg,
                 'auth': ac,
                 'auth_online': ao,
                 'ip': oip, 'port': oport,
@@ -899,7 +868,7 @@ def zahid_build_session(uid, password, region):
             }
         except Exception as e:
             with lock:
-                console.print(f"[dim red]{uid} token err: {type(e).__name__}[/dim red]")
+                console.print(f"[dim red][{reg_hint}] {uid} err:{type(e).__name__}[/dim red]")
             time.sleep(TOKEN_RETRY_DELAY)
 
     return None
@@ -935,12 +904,25 @@ def _send_chat_and_check(sc, pkt):
     try:
         ack = sc.recv(4096)
         if ack == b'':
-            raise ConnectionError("chat_server_closed_after_send")
+            raise ConnectionError("chat_closed")
     except socket.timeout:
         pass
 
 
-# ================== PHASE 2: Single Account Online ==================
+# ================== PHASE 2: Persistent Online Session ==================
+def _open_persistent_online(ip, port, auth_online, key, iv, region):
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 524288)
+    s.settimeout(4.0)
+    s.connect((ip, int(port)))
+    s.sendall(bytes.fromhex(auth_online))
+    time.sleep(0.15)
+    s.sendall(region_pkt(send_keep_alive(key, iv), region))
+    return s
+
+
 def zahid_run_session(sess, gen_stop_event):
     bot_uid = sess['bot_uid']
     region = sess['region']
@@ -949,55 +931,93 @@ def zahid_run_session(sess, gen_stop_event):
     ip = sess['ip']; port = sess['port']
     ip2 = sess['ip2']; port2 = sess['port2']
     key = sess['key']; iv = sess['iv']
-
-    with lock:
-        console.print(f"[green]Bot {bot_uid} {region} LOGGED IN[/green]")
+    tag = f"{region}|{bot_uid}"
 
     zahid_add_bot(bot_uid, str(sess['uid']), region)
 
+    sock_online = None
+    rx_buf = bytearray()
     cycle_num = 0
     consecutive_join_fails = 0
 
-    while not RF and not gen_stop_event.is_set():
-        cycle_num += 1
-        sock_online = None
-        sock_chat = None
-        target_uid = None
-        squad_code = None
-        chat_code = None
-
-        try:
-            # ১) গ্রুপে জয়েন হওয়া (এবং সেই সকেটটাই sock_online হিসেবে ধরে রাখা)
-            for attempt in range(JOIN_MAX_TRIES):
-                if RF or gen_stop_event.is_set(): break
+    try:
+        while not RF and not gen_stop_event.is_set():
+            # ০) পারসিস্টেন্ট অনলাইন সকেট না থাকলে কানেক্ট করে নেবে (BD=7319, IND=7314)
+            if sock_online is None:
                 try:
-                    sock_online = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                    sock_online.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-                    sock_online.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 524288)
-                    sock_online.settimeout(0.8)
-                    sock_online.connect((ip, int(port)))
-                    sock_online.sendall(bytes.fromhex(auth_online))
-                    time.sleep(0.05)
+                    sock_online = _open_persistent_online(ip, port, auth_online, key, iv, region)
+                    rx_buf.clear()
+                    with lock:
+                        console.print(f"[green][{tag}] ON ({ip}:{port})[/green]")
+                except Exception:
+                    sock_online = None
+                    consecutive_join_fails += 1
+                    if consecutive_join_fails >= 3 and sess.get('password'):
+                        with lock:
+                            console.print(f"[yellow][{tag}] token expired, rebuilding...[/yellow]")
+                        new_sess = zahid_build_session(sess['uid'], sess['password'], region)
+                        if new_sess:
+                            zahid_upsert_single_token(new_sess)
+                            sess = new_sess
+                            bot_uid = sess['bot_uid']
+                            region = sess['region']
+                            tag = f"{region}|{bot_uid}"
+                            auth = sess['auth']
+                            auth_online = sess['auth_online']
+                            ip = sess['ip']; port = sess['port']
+                            ip2 = sess['ip2']; port2 = sess['port2']
+                            key = sess['key']; iv = sess['iv']
+                            consecutive_join_fails = 0
+                    time.sleep(1.5)
+                    continue
 
-                    deadline = time.time() + JOIN_TIMEOUT
-                    last_send = 0
-                    while time.time() < deadline:
-                        if RF or gen_stop_event.is_set(): break
-                        if time.time() - last_send > JOIN_REFRESH:
-                            try:
-                                sock_online.sendall(Join_Sq(key, iv))
-                                last_send = time.time()
-                            except:
-                                break
+            cycle_num += 1
+            sock_chat = None
+            target_uid = None
+            squad_code = None
+            chat_code = None
+
+            try:
+                # ১) একই পারসিস্টেন্ট sock_online দিয়ে গ্রুপ খোঁজা (BD=0519, IND=0514)
+                rx_buf.clear()
+                deadline = time.time() + JOIN_TIMEOUT
+                last_send = 0
+                last_ka = time.time()
+
+                while time.time() < deadline and not RF and not gen_stop_event.is_set():
+                    if time.time() - last_send > JOIN_REFRESH:
                         try:
-                            sock_online.settimeout(0.15)
-                            data = sock_online.recv(65536)
-                            if not data:
-                                break
-                            hex_data = data.hex()
-                            if hex_data.startswith('0500') and len(hex_data) > 100:
+                            sock_online.sendall(region_pkt(Join_Sq(key, iv), region))
+                            last_send = time.time()
+                        except Exception:
+                            try: sock_online.close()
+                            except: pass
+                            sock_online = None
+                            break
+
+                    if time.time() - last_ka >= 10.0:
+                        try:
+                            sock_online.sendall(region_pkt(send_keep_alive(key, iv), region))
+                            last_ka = time.time()
+                        except Exception:
+                            try: sock_online.close()
+                            except: pass
+                            sock_online = None
+                            break
+
+                    try:
+                        sock_online.settimeout(0.15)
+                        data = sock_online.recv(65536)
+                        if not data:
+                            try: sock_online.close()
+                            except: pass
+                            sock_online = None
+                            break
+                        rx_buf.extend(data)
+                        for ptype, payload in pop_tcp_frames(rx_buf):
+                            if ptype == 0x05 and len(payload) > 45:
                                 try:
-                                    js = DeCode_PackEt(hex_data[10:])
+                                    js = DeCode_PackEt(payload.hex())
                                     if js:
                                         packet = json.loads(js)
                                         f5 = packet.get('5', {}).get('data', {})
@@ -1009,211 +1029,198 @@ def zahid_run_session(sess, gen_stop_event):
                                             chat_code = ch
                                             squad_code = sq
                                             break
-                                except:
+                                except Exception:
                                     pass
-                        except socket.timeout:
-                            continue
-                        except (ConnectionResetError, OSError):
-                            break
-                        except:
-                            continue
-
-                    if target_uid:
-                        break
-                    try: sock_online.close()
-                    except: pass
-                    sock_online = None
-                    time.sleep(CYCLE_RETRY_DELAY)
-                except:
-                    try:
-                        if sock_online: sock_online.close()
-                    except: pass
-                    sock_online = None
-                    time.sleep(CYCLE_RETRY_DELAY)
-
-            if RF or gen_stop_event.is_set():
-                try:
-                    if sock_online:
                         if target_uid:
-                            sock_online.sendall(ExiT(key, iv))
-                        sock_online.close()
-                except: pass
-                break
+                            break
+                    except socket.timeout:
+                        continue
+                    except (ConnectionResetError, BrokenPipeError, OSError):
+                        try: sock_online.close()
+                        except: pass
+                        sock_online = None
+                        break
 
-            if not sock_online or not target_uid:
-                consecutive_join_fails += 1
-                if consecutive_join_fails >= 3 and sess.get('password'):
-                    with lock:
-                        console.print(f"[yellow]{sess['uid']} token expired/failed, rebuilding...[/yellow]")
-                    new_sess = zahid_build_session(sess['uid'], sess['password'], region)
-                    if new_sess:
-                        zahid_upsert_single_token(new_sess)
-                        sess = new_sess
-                        bot_uid = sess['bot_uid']
-                        auth = sess['auth']
-                        auth_online = sess['auth_online']
-                        ip = sess['ip']; port = sess['port']
-                        ip2 = sess['ip2']; port2 = sess['port2']
-                        key = sess['key']; iv = sess['iv']
-                        consecutive_join_fails = 0
-                time.sleep(0.05)
-                continue
-
-            consecutive_join_fails = 0
-            # মোট ১৫ সেকেন্ড গ্রুপে থাকার টাইমার শুরু
-            stay_end = time.time() + STAY_TIME
-
-            with lock:
-                console.print(f"[cyan]{bot_uid} JOINED cycle {cycle_num} -> owner={target_uid} | chat_code={chat_code}[/cyan]")
-
-            # ২) গ্রুপে ঢোকার সময় একবারই /s1 ব্যাজ রিকোয়েস্ট পাঠানো (প্রতি সাইকেলে ১ বার)
-            s1_sent = False
-            s1_err = None
-            try:
-                s1_pkt = xc4_s1_badge_pkt(target_uid, key, iv, region=region, badge_value=S1_BADGE_VALUE)
-                sock_online.sendall(s1_pkt)
-                s1_sent = True
-            except Exception as ex:
-                s1_err = f"{type(ex).__name__}: {ex}"
-
-            with lock:
-                if s1_sent:
-                    console.print(f"[bold blue]{bot_uid} S1 REQUEST SENT (cycle {cycle_num}) -> owner={target_uid}[/bold blue]")
-                else:
-                    console.print(f"[bold red]{bot_uid} S1 REQUEST FAILED (cycle {cycle_num}) -> err={s1_err}[/bold red]")
-
-            # ৩) ১ম মেসেজ পাঠানো (GREETING_1)
-            msg1_sent = False
-            msg1_err = None
-            msg1_text = f"[c][b][{ArA_CoLor()}]{GREETING_1}"
-
-            for _ in range(3):
-                if RF or gen_stop_event.is_set(): break
-                try:
-                    sock_chat = _connect_and_auth_chat(ip2, port2, auth, target_uid, chat_code, key, iv)
-                    pkt1 = xc4_send_squad_msg(msg1_text, target_uid, key, iv, region=region)
-                    _send_chat_and_check(sock_chat, pkt1)
-                    msg1_sent = True
-                    msg1_err = None
+                if RF or gen_stop_event.is_set():
                     break
-                except Exception as ex:
-                    msg1_err = f"{type(ex).__name__}: {ex}"
-                    try:
-                        if sock_chat: sock_chat.close()
-                    except: pass
-                    sock_chat = None
-                    time.sleep(CHAT_RETRY_DELAY)
 
-            with lock:
-                if msg1_sent:
-                    console.print(f"[bold green]{bot_uid} MESSAGE 1 SENT (1201, cycle {cycle_num}) -> owner={target_uid}[/bold green]")
-                else:
-                    console.print(f"[bold red]{bot_uid} MESSAGE 1 FAILED (cycle {cycle_num}) -> err={msg1_err}[/bold red]")
+                if not sock_online or not target_uid:
+                    time.sleep(CYCLE_RETRY_DELAY)
+                    continue
 
-            # ৪) ১ সেকেন্ড বিরতি দিয়ে ২য় মেসেজ বক্স পাঠানো (GREETING_2)
-            msg2_sent = False
-            msg2_err = None
-            if not RF and not gen_stop_event.is_set():
-                time.sleep(SECOND_MSG_DELAY)
-                for _ in range(2):
+                consecutive_join_fails = 0
+                stay_end = time.time() + STAY_TIME
+
+                with lock:
+                    console.print(f"[cyan][{tag}] C{cycle_num} JOIN->{target_uid}[/cyan]")
+
+                # ২) ১ম মেসেজ পাঠানো (GREETING_1)
+                msg1_sent = False
+                msg1_err = ""
+                msg1_text = f"[c][b][{ArA_CoLor()}]{GREETING_1}"
+
+                for _ in range(3):
                     if RF or gen_stop_event.is_set(): break
                     try:
-                        if not sock_chat:
-                            sock_chat = _connect_and_auth_chat(ip2, port2, auth, target_uid, chat_code, key, iv)
-                        pkt2 = xc4_send_squad_msg(GREETING_2, target_uid, key, iv, region=region)
-                        _send_chat_and_check(sock_chat, pkt2)
-                        msg2_sent = True
-                        msg2_err = None
+                        sock_chat = _connect_and_auth_chat(ip2, port2, auth, target_uid, chat_code, key, iv)
+                        pkt1 = xc4_send_squad_msg(msg1_text, target_uid, key, iv, region=region)
+                        _send_chat_and_check(sock_chat, pkt1)
+                        msg1_sent = True
+                        msg1_err = ""
                         break
                     except Exception as ex:
-                        msg2_err = f"{type(ex).__name__}: {ex}"
+                        msg1_err = type(ex).__name__
                         try:
                             if sock_chat: sock_chat.close()
                         except: pass
                         sock_chat = None
                         time.sleep(CHAT_RETRY_DELAY)
 
-                with lock:
-                    if msg2_sent:
-                        console.print(f"[bold green]{bot_uid} MESSAGE 2 SENT (1201, cycle {cycle_num}) -> owner={target_uid}[/bold green]")
-                    else:
-                        console.print(f"[bold red]{bot_uid} MESSAGE 2 FAILED (cycle {cycle_num}) -> err={msg2_err}[/bold red]")
+                # ৩) ১ সেকেন্ড বিরতি দিয়ে ২য় মেসেজ বক্স পাঠানো (GREETING_2)
+                msg2_sent = False
+                msg2_err = ""
+                if not RF and not gen_stop_event.is_set():
+                    time.sleep(SECOND_MSG_DELAY)
+                    for _ in range(2):
+                        if RF or gen_stop_event.is_set(): break
+                        try:
+                            if not sock_chat:
+                                sock_chat = _connect_and_auth_chat(ip2, port2, auth, target_uid, chat_code, key, iv)
+                            pkt2 = xc4_send_squad_msg(GREETING_2, target_uid, key, iv, region=region)
+                            _send_chat_and_check(sock_chat, pkt2)
+                            msg2_sent = True
+                            msg2_err = ""
+                            break
+                        except Exception as ex:
+                            msg2_err = type(ex).__name__
+                            try:
+                                if sock_chat: sock_chat.close()
+                            except: pass
+                            sock_chat = None
+                            time.sleep(CHAT_RETRY_DELAY)
 
-            # ৫) ২য় মেসেজ দেওয়ার পরপরই বট নিজে ১টি ইমোট মারবে (online socket দিয়ে)
-            emoted = False
-            emote_err = None
-            if not RF and not gen_stop_event.is_set() and EMOTE_ID:
-                time.sleep(EMOTE_AFTER_MSG_WAIT)
                 try:
-                    emote_pkt = xc4_emote_pkt(bot_uid, int(EMOTE_ID), key, iv, region=region)
-                    sock_online.sendall(emote_pkt)
-                    emoted = True
-                except Exception as ex:
-                    emote_err = f"{type(ex).__name__}: {ex}"
-
-                with lock:
-                    if emoted:
-                        console.print(f"[bold magenta]{bot_uid} EMOTE SENT (cycle {cycle_num}) -> emote_id={EMOTE_ID}[/bold magenta]")
-                    else:
-                        console.print(f"[bold red]{bot_uid} EMOTE FAILED (cycle {cycle_num}) -> err={emote_err}[/bold red]")
-
-            # ৬) বাকি সময়সহ মোট ১৫ সেকেন্ড গ্রুপে দাঁড়িয়ে থাকা
-            last_ka = time.time()
-            while time.time() < stay_end and not RF and not gen_stop_event.is_set():
-                try:
-                    sock_online.settimeout(0.5)
-                    chunk = sock_online.recv(4096)
-                    if chunk == b'':
-                        remaining = stay_end - time.time()
-                        if remaining > 0:
-                            time.sleep(min(remaining, 0.5))
-                        continue
-                except socket.timeout:
-                    pass
-                except Exception:
-                    time.sleep(0.5)
-
-                if time.time() - last_ka >= 5.0:
-                    try:
-                        sock_online.sendall(send_keep_alive(key, iv))
-                        last_ka = time.time()
-                    except Exception:
-                        pass
-
-            # ৭) ১৫ সেকেন্ড পর (অথবা ৩ ঘণ্টার রিফ্রেশে) গ্রুপ থেকে বের হওয়া
-            if sock_online:
-                try:
-                    sock_online.sendall(ExiT(key, iv))
-                    time.sleep(0.05)
+                    if sock_chat: sock_chat.close()
                 except: pass
+                sock_chat = None
 
-            try:
-                if sock_online: sock_online.close()
-            except: pass
-            try:
-                if sock_chat: sock_chat.close()
-            except: pass
+                # ৪) ২য় মেসেজ দেওয়ার পরপরই ১০টি Evo ইমোট থেকে র‍্যান্ডম ইমোট মারা
+                emoted = False
+                chosen_emote = random.choice(EMOTE_IDS) if EMOTE_IDS else 0
+                if not RF and not gen_stop_event.is_set() and chosen_emote and sock_online:
+                    time.sleep(EMOTE_AFTER_MSG_WAIT)
+                    try:
+                        emote_pkt = xc4_emote_pkt(bot_uid, int(chosen_emote), key, iv, region=region)
+                        sock_online.sendall(emote_pkt)
+                        emoted = True
+                    except Exception:
+                        emoted = False
 
-            with lock:
-                console.print(
-                    f"[yellow]{bot_uid} LEFT cycle {cycle_num} "
-                    f"(s1={s1_sent}, msg1={msg1_sent}, msg2={msg2_sent}, emoted={emoted}, stayed {STAY_TIME}s)[/yellow]"
-                )
+                with lock:
+                    m1_ic = "✔" if msg1_sent else f"✘({msg1_err})"
+                    m2_ic = "✔" if msg2_sent else f"✘({msg2_err})"
+                    em_ic = f"{chosen_emote}(✔)" if emoted else f"{chosen_emote}(✘)"
+                    col = "green" if (msg1_sent and msg2_sent) else "red"
+                    console.print(f"[{col}][{tag}] C{cycle_num} M1:{m1_ic} M2:{m2_ic} E:{em_ic}[/{col}]")
 
-            time.sleep(0.05)
+                # ৫) বাকি সময়সহ মোট ১৫ সেকেন্ড গ্রুপে দাঁড়িয়ে থাকা
+                while time.time() < stay_end and not RF and not gen_stop_event.is_set():
+                    if not sock_online:
+                        break
+                    try:
+                        sock_online.settimeout(0.5)
+                        chunk = sock_online.recv(4096)
+                        if chunk == b'':
+                            try: sock_online.close()
+                            except: pass
+                            sock_online = None
+                            break
+                        rx_buf.extend(chunk)
+                        pop_tcp_frames(rx_buf)
+                    except socket.timeout:
+                        pass
+                    except Exception:
+                        try: sock_online.close()
+                        except: pass
+                        sock_online = None
+                        break
 
-        except Exception as e:
-            with lock:
-                console.print(f"[red]{bot_uid} cycle err: {type(e).__name__}[/red]")
-            try:
-                if sock_online: sock_online.close()
-            except: pass
-            try:
-                if sock_chat: sock_chat.close()
-            except: pass
-            time.sleep(0.05)
+                    if sock_online and time.time() - last_ka >= 5.0:
+                        try:
+                            sock_online.sendall(region_pkt(send_keep_alive(key, iv), region))
+                            last_ka = time.time()
+                        except Exception:
+                            try: sock_online.close()
+                            except: pass
+                            sock_online = None
+                            break
 
-    zahid_remove_bot(bot_uid)
+                # ৬) ১৫ সেকেন্ড পর ExiT (অনলাইন রেখেই সোলো হওয়া) -> একবার পারফেক্ট ইনভাইট পাঠানো
+                inv_sent = False
+                if sock_online and not RF and not gen_stop_event.is_set():
+                    try:
+                        sock_online.sendall(region_pkt(ExiT(key, iv), region))
+                        drain_end = time.time() + EXIT_BEFORE_INV_WAIT
+                        while time.time() < drain_end:
+                            try:
+                                sock_online.settimeout(0.1)
+                                d_left = sock_online.recv(4096)
+                                if not d_left:
+                                    try: sock_online.close()
+                                    except: pass
+                                    sock_online = None
+                                    break
+                                rx_buf.extend(d_left)
+                                pop_tcp_frames(rx_buf)
+                            except socket.timeout:
+                                continue
+                            except Exception:
+                                break
+
+                        if sock_online:
+                            inv_pkt = xc4_perfect_invite_pkt(
+                                bot_uid, target_uid, key, iv,
+                                region=region, badge_value=INVITE_BADGE_VALUE,
+                            )
+                            sock_online.sendall(inv_pkt)
+                            time.sleep(INV_AFTER_WAIT)
+                            try:
+                                sock_online.settimeout(0.15)
+                                d_inv = sock_online.recv(4096)
+                                if d_inv:
+                                    rx_buf.extend(d_inv)
+                                    pop_tcp_frames(rx_buf)
+                            except socket.timeout:
+                                pass
+                            inv_sent = True
+                    except Exception:
+                        inv_sent = False
+
+                with lock:
+                    inv_ic = "✔" if inv_sent else "✘"
+                    console.print(f"[yellow][{tag}] C{cycle_num} LEFT ({STAY_TIME:.0f}s) | INV:{inv_ic}[/yellow]")
+
+                time.sleep(0.1)
+
+            except Exception as e:
+                with lock:
+                    console.print(f"[red][{tag}] err:{type(e).__name__}[/red]")
+                try:
+                    if sock_chat: sock_chat.close()
+                except: pass
+                try:
+                    if sock_online: sock_online.close()
+                except: pass
+                sock_online = None
+                time.sleep(0.5)
+    finally:
+        try:
+            if sock_online:
+                sock_online.sendall(region_pkt(ExiT(key, iv), region))
+                sock_online.close()
+        except Exception:
+            pass
+        zahid_remove_bot(bot_uid)
 
 
 # ================== Account loading ==================
@@ -1244,14 +1251,18 @@ def zahid_load_all():
     return all_
 
 
-# ================== Session Prep Helper ==================
+# ================== Session Prep Helper (BD -> token.json, IND -> token_ind.json) ==================
 def zahid_prepare_sessions(accs, use_saved=True):
-    saved_tokens = zahid_load_saved_tokens(TOKEN_FILE) if use_saved else {}
+    saved_by_region = {
+        reg: (zahid_load_saved_tokens(reg) if use_saved else {})
+        for reg in RAF.keys()
+    }
 
-    if use_saved and saved_tokens:
-        console.print(f"[bold cyan]Found existing {TOKEN_FILE} ({len(saved_tokens)} saved tokens) — Testing saved tokens first...[/bold cyan]\n")
+    if use_saved:
+        info = " | ".join(f"{r}:{len(saved_by_region[r])}" for r in RAF)
+        console.print(f"[cyan]Saved tokens -> {info}[/cyan]")
     else:
-        console.print(f"[bold cyan]Building fresh tokens for {len(accs)} account(s) with {TOKEN_WORKERS} threads...[/bold cyan]\n")
+        console.print(f"[cyan]Rebuilding {len(accs)} tokens...[/cyan]")
 
     acc_queue = queue.Queue()
     for a in accs:
@@ -1271,23 +1282,25 @@ def zahid_prepare_sessions(accs, use_saved=True):
 
             try:
                 uid_str = str(uid)
-                if use_saved and uid_str in saved_tokens:
-                    cand = saved_tokens[uid_str]
+                reg_saved = saved_by_region.get(region, {})
+
+                if use_saved and uid_str in reg_saved:
+                    cand = reg_saved[uid_str]
                     cand['password'] = pwd
                     if zahid_test_session_online(cand):
                         with ready_lock:
                             ready_sessions.append(cand)
                         with stats_lock:
                             stats['reused'] += 1
-                        console.print(f"[green][REUSED] {uid_str} ({region}) token.json VALID -> bot={cand['bot_uid']}[/green]")
+                        console.print(f"[green][{region}] {uid_str} REUSED -> {cand['bot_uid']}[/green]")
                         continue
                     else:
-                        console.print(f"[yellow][EXPIRED] {uid_str} ({region}) saved token invalid — rebuilding...[/yellow]")
+                        console.print(f"[yellow][{region}] {uid_str} EXPIRED -> rebuild[/yellow]")
 
                 if not pwd:
                     with stats_lock:
                         stats['failed'] += 1
-                    console.print(f"[red]{uid_str} ({region}) NO PASSWORD to rebuild[/red]")
+                    console.print(f"[red][{region}] {uid_str} NO_PASS[/red]")
                     continue
 
                 sess = zahid_build_session(uid_str, pwd, region)
@@ -1297,15 +1310,15 @@ def zahid_prepare_sessions(accs, use_saved=True):
                         ready_sessions.append(sess)
                     with stats_lock:
                         stats['built'] += 1
-                    console.print(f"[green][NEW] {uid_str} ({region}) token SAVED -> bot={sess['bot_uid']}[/green]")
+                    console.print(f"[green][{region}] {uid_str} NEW -> {sess['bot_uid']}[/green]")
                 else:
                     with stats_lock:
                         stats['failed'] += 1
-                    console.print(f"[red]{uid_str} ({region}) FAILED[/red]")
+                    console.print(f"[red][{region}] {uid_str} FAIL[/red]")
             except Exception as e:
                 with stats_lock:
                     stats['failed'] += 1
-                console.print(f"[red]{uid} worker err: {type(e).__name__}: {e}[/red]")
+                console.print(f"[red][{region}] {uid} err:{type(e).__name__}[/red]")
             finally:
                 acc_queue.task_done()
 
@@ -1318,10 +1331,7 @@ def zahid_prepare_sessions(accs, use_saved=True):
     for t in workers:
         t.join()
 
-    console.print(f"\n[bold green]=== SESSION PREP DONE ===[/bold green]")
-    console.print(f"  Reused from token.json : {stats['reused']}")
-    console.print(f"  Newly Built & Saved    : {stats['built']}")
-    console.print(f"  Failed                 : {stats['failed']}")
+    console.print(f"[green]Prep Done -> Reused:{stats['reused']} | New:{stats['built']} | Fail:{stats['failed']}[/green]")
     return ready_sessions
 
 
@@ -1332,26 +1342,26 @@ def zahid_main():
 
     while not RF:
         accs = zahid_load_all()
-        saved_tokens = zahid_load_saved_tokens(TOKEN_FILE) if first_run else {}
+        if not accs:
+            for reg in RAF.keys():
+                for u, s in zahid_load_saved_tokens(reg).items():
+                    accs.append((u, None, s.get('region', reg)))
 
-        if not accs and not saved_tokens:
-            console.print("[red]No accounts found in accounts.txt or token.json[/red]")
+        if not accs:
+            console.print("[red]No accounts in accounts.txt / accounts_ind.txt[/red]")
             return
 
-        if not accs and saved_tokens:
-            accs = [(u, None, s.get('region', 'BD')) for u, s in saved_tokens.items()]
-
-        console.print(f"[bold green]Total Accounts Loaded: {len(accs)}[/bold green]")
+        bd_cnt = sum(1 for _, _, r in accs if r == "BD")
+        ind_cnt = sum(1 for _, _, r in accs if r == "IND")
+        console.print(f"[green]Loaded -> BD:{bd_cnt} | IND:{ind_cnt} | Emotes:{len(EMOTE_IDS)}[/green]")
 
         ready_sessions = zahid_prepare_sessions(accs, use_saved=first_run)
         first_run = False
 
         if not ready_sessions:
-            console.print("[red]No valid tokens available — retrying in 30s...[/red]")
+            console.print("[red]No valid tokens — retry 30s[/red]")
             time.sleep(30)
             continue
-
-        console.print(f"[bold cyan]Launching {len(ready_sessions)} bot(s) online together...[/bold cyan]\n")
 
         gen_stop_event = threading.Event()
         bot_threads = []
@@ -1370,16 +1380,14 @@ def zahid_main():
             except Exception as e:
                 console.print(f"[red]launch err {sess.get('uid')}: {type(e).__name__}[/red]")
 
-        console.print(f"[bold green]=== ALL {launched} BOT(S) NOW ONLINE (Auto token refresh every 3 hours) ===[/bold green]")
-        console.print(f"[bold cyan]=== (Ctrl+C to stop) ===[/bold cyan]")
+        console.print(f"[bold green]ONLINE: {launched} bots (BD+IND | 3h Refresh)[/bold green]")
 
-        # ৩ ঘণ্টা অপেক্ষা
         refresh_at = time.time() + TOKEN_REFRESH_INTERVAL
         while time.time() < refresh_at and not RF:
             try:
                 time.sleep(1)
             except KeyboardInterrupt:
-                console.print("[yellow]Stopped by user.[/yellow]")
+                console.print("[yellow]Stopped.[/yellow]")
                 RF = True
                 gen_stop_event.set()
                 os._exit(0)
@@ -1387,8 +1395,7 @@ def zahid_main():
         if RF:
             break
 
-        # ৩ ঘণ্টা পূর্ণ হলে পুরোনো সেশন থামিয়ে token.json ডিলিট ও নতুন করে তৈরি
-        console.print(f"\n[bold yellow]=== 3 HOURS COMPLETED: Stopping old sessions & deleting {TOKEN_FILE} ===[/bold yellow]")
+        console.print(f"\n[yellow]3h Refresh: resetting token files...[/yellow]")
         gen_stop_event.set()
         for t in bot_threads:
             t.join(timeout=3.0)
@@ -1396,24 +1403,22 @@ def zahid_main():
         with connected_lock:
             connected_bots.clear()
 
-        # পাসওয়ার্ডযুক্ত অ্যাকাউন্ট থাকলেই কেবল token.json ডিলিট করে নতুন বানাবে
-        has_passwords = any(p for _, p, _ in zahid_load_all())
-        if has_passwords:
-            try:
-                if os.path.exists(TOKEN_FILE):
-                    os.remove(TOKEN_FILE)
-                    console.print(f"[yellow]Deleted old {TOKEN_FILE} — building brand new tokens...[/yellow]\n")
-            except Exception as ex:
-                console.print(f"[red]Could not delete {TOKEN_FILE}: {ex}[/red]")
-        else:
-            console.print("[yellow]accounts.txt has no passwords — keeping existing token.json[/yellow]")
+        for reg, acc_fp in RAF.items():
+            tok_fp = get_token_file(reg)
+            has_pw = bool(zahid_load_file(acc_fp))
+            if has_pw and os.path.exists(tok_fp):
+                try:
+                    os.remove(tok_fp)
+                    console.print(f"[yellow][{reg}] Deleted {tok_fp}[/yellow]")
+                except Exception as ex:
+                    console.print(f"[red][{reg}] Del err {tok_fp}: {ex}[/red]")
 
 
 if __name__ == "__main__":
     try:
         zahid_main()
     except KeyboardInterrupt:
-        console.print("[yellow]Stopped by user.[/yellow]")
+        console.print("[yellow]Stopped.[/yellow]")
         os._exit(0)
     except Exception:
         traceback.print_exc()
