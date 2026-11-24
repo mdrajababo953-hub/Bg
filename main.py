@@ -66,7 +66,8 @@ CHAT_AUTH_WAIT   = 0.25
 CHAT_JOIN_WAIT   = 0.25
 CHAT_RETRY_DELAY = 0.15
 SECOND_MSG_DELAY = 1.0         # ১ম মেসেজের ১ সেকেন্ড পর ২য় মেসেজ পাঠাবে
-EMOTE_AFTER_MSG_WAIT = 0.20    # ২য় মেসেজের পর ইমোট মারার বিরতি
+BUNDLE_AFTER_MSG_WAIT   = 0.20 # ২য় মেসেজের পর বান্ডিল চেঞ্জ করার বিরতি
+EMOTE_AFTER_BUNDLE_WAIT = 0.30 # বান্ডিল চেঞ্জের পর ইমোট মারার বিরতি
 EXIT_BEFORE_INV_WAIT = 0.35    # ExiT করার পর সোলো হতে ০.৩৫s অপেক্ষা
 INV_AFTER_WAIT = 0.25          # ইনভাইট পাঠানোর পর বিরতি
 JOIN_TIMEOUT = 2.5
@@ -88,7 +89,7 @@ GREETING_2 = (
     "[B][00BFFF]────────────────\n"
     "[B][FFD700]Fast join telegram\n"
     "[B][00BFFF]├─[00FF00]Telegram [FFFFFF]@Ariyan_world_A9x\n"
-    "[B][00BFFF]└─[00FF00]Telegram \n [FFFFFF]https://t.me/Ariyan_world_A9x\n"
+    "[B][00BFFF]└─[00FF00]Telegram [FFFFFF]https://t'me/Ariyan_world_A9x\n"
     "[B][00BFFF]────────────────"
 )
 
@@ -108,6 +109,18 @@ BASE_EMOTE_MAP = {
 
 EMOTE_MAP = dict(BASE_EMOTE_MAP)
 EMOTE_IDS = list(BASE_EMOTE_MAP.values())
+
+# ১২টি বান্ডিল আইডি (প্রতিটি বট গ্রুপে ঢুকে মেসেজের পর আলাদা আলাদা বান্ডিল পরবে)
+BUNDLE_IDS = [
+    914000002,  # Rampage
+    914000003,  # Cannibal
+    914042001,  # Frostfire
+    914051001,  # Dreamspace
+    914053001,  # Special
+]
+
+_bundle_lock = threading.Lock()
+_active_group_bundles = {}   # {str(target_uid): {bundle_id: count}}
 
 HR = {
     "User-Agent": "UnityPlayer/2018.4.12f1 (UnityWebRequest/1.0, libcurl/8.5.0-DEV)",
@@ -153,6 +166,48 @@ def zahid_add_bot(b, o, r):
 def zahid_remove_bot(b):
     with connected_lock:
         connected_bots.pop(b, None)
+
+
+def pick_unique_bundle(target_uid, prev_bundle=None):
+    """একই গ্রুপে থাকা প্রত্যেক বটকে আলাদা আলাদা বান্ডিল দেয় এবং পরের গ্রুপে নতুন বান্ডিল নেয়"""
+    key_uid = str(target_uid)
+    with _bundle_lock:
+        if len(_active_group_bundles) > 2000:
+            _active_group_bundles.clear()
+        used_counts = _active_group_bundles.setdefault(key_uid, {})
+
+        # প্রথম পছন্দ: এই গ্রুপে এখন কেউ পরেনি এবং এই বট আগের গ্রুপেও পরেনি
+        candidates = [b for b in BUNDLE_IDS if b not in used_counts and b != prev_bundle]
+        if not candidates:
+            # দ্বিতীয় পছন্দ: এই গ্রুপে এখন কেউ পরেনি
+            candidates = [b for b in BUNDLE_IDS if b not in used_counts]
+        if not candidates:
+            # তৃতীয় পছন্দ: গ্রুপে ১২+ বট থাকলে আগেরটা বাদে যেকোনোটা
+            candidates = [b for b in BUNDLE_IDS if b != prev_bundle] or list(BUNDLE_IDS)
+
+        chosen = random.choice(candidates)
+        used_counts[chosen] = used_counts.get(chosen, 0) + 1
+
+    mode = random.choice([1, 2]) if chosen in (914047001, 914051001) else 1
+    return chosen, mode
+
+
+def release_group_bundle(target_uid, bundle_id):
+    """বট গ্রুপ থেকে লিভ করলে ওই গ্রুপের বান্ডিল ট্র্যাকিং পরিষ্কার করে"""
+    if not target_uid or not bundle_id:
+        return
+    key_uid = str(target_uid)
+    with _bundle_lock:
+        used_counts = _active_group_bundles.get(key_uid)
+        if not used_counts:
+            return
+        cnt = used_counts.get(bundle_id, 0)
+        if cnt <= 1:
+            used_counts.pop(bundle_id, None)
+        else:
+            used_counts[bundle_id] = cnt - 1
+        if not used_counts:
+            _active_group_bundles.pop(key_uid, None)
 
 
 def region_pkt(pkt, region):
@@ -315,6 +370,29 @@ def xc4_send_squad_msg(msg_text, owner_uid, key, iv, region="BD"):
     inner = zahid_proto_encode(fields)
     pk_bytes = bytes.fromhex("080112") + zahid_varint_encode(len(inner)) + inner
     return xc4_generate_pk(pk_bytes, "1201", key, iv)
+
+
+def xc4_bundle_pkt(bundle_id, key, iv, region="BD", mode=1):
+    fields = {
+        1: 88,
+        2: {
+            1: {
+                1: int(bundle_id),
+                2: int(mode),
+            },
+            2: 2,
+        },
+    }
+    reg_l = str(region).lower()
+    if reg_l == "ind":
+        p_type = "0514"
+    elif reg_l == "bd":
+        p_type = "0519"
+    else:
+        p_type = "0515"
+
+    raw = zahid_proto_encode(fields)
+    return xc4_generate_pk(raw, p_type, key, iv)
 
 
 def xc4_emote_pkt(bot_uid, emote_id, key, iv, region="BD"):
@@ -937,6 +1015,7 @@ def zahid_run_session(sess, gen_stop_event):
     rx_buf = bytearray()
     cycle_num = 0
     consecutive_join_fails = 0
+    last_bundle_id = None
 
     try:
         while not RF and not gen_stop_event.is_set():
@@ -974,6 +1053,7 @@ def zahid_run_session(sess, gen_stop_event):
             target_uid = None
             squad_code = None
             chat_code = None
+            chosen_bundle = None
 
             try:
                 # ১) একই পারসিস্টেন্ট sock_online দিয়ে গ্রুপ খোঁজা (BD=0519, IND=0514)
@@ -1106,26 +1186,52 @@ def zahid_run_session(sess, gen_stop_event):
                 except: pass
                 sock_chat = None
 
-                # ৪) ২য় মেসেজ দেওয়ার পরপরই ১০টি Evo ইমোট থেকে র‍্যান্ডম ইমোট মারা
+                # ৪) মেসেজগুলোর পর ইমোট দেওয়ার আগে একবার বান্ডিল চেঞ্জ করা (প্রত্যেক বট আলাদা আলাদা)
+                bundled = False
+                chosen_bundle, bundle_mode = pick_unique_bundle(target_uid, prev_bundle=last_bundle_id)
+                if not RF and not gen_stop_event.is_set() and chosen_bundle and sock_online:
+                    time.sleep(BUNDLE_AFTER_MSG_WAIT)
+                    try:
+                        bundle_pkt = xc4_bundle_pkt(
+                            int(chosen_bundle), key, iv, region=region, mode=bundle_mode
+                        )
+                        sock_online.sendall(bundle_pkt)
+                        bundled = True
+                        last_bundle_id = chosen_bundle
+                    except (ConnectionResetError, BrokenPipeError, OSError):
+                        bundled = False
+                        try: sock_online.close()
+                        except: pass
+                        sock_online = None
+                    except Exception:
+                        bundled = False
+
+                # ৫) বান্ডিল চেঞ্জের পর ১০টি Evo ইমোট থেকে র‍্যান্ডম ইমোট মারা
                 emoted = False
                 chosen_emote = random.choice(EMOTE_IDS) if EMOTE_IDS else 0
                 if not RF and not gen_stop_event.is_set() and chosen_emote and sock_online:
-                    time.sleep(EMOTE_AFTER_MSG_WAIT)
+                    time.sleep(EMOTE_AFTER_BUNDLE_WAIT)
                     try:
                         emote_pkt = xc4_emote_pkt(bot_uid, int(chosen_emote), key, iv, region=region)
                         sock_online.sendall(emote_pkt)
                         emoted = True
+                    except (ConnectionResetError, BrokenPipeError, OSError):
+                        emoted = False
+                        try: sock_online.close()
+                        except: pass
+                        sock_online = None
                     except Exception:
                         emoted = False
 
                 with lock:
                     m1_ic = "✔" if msg1_sent else f"✘({msg1_err})"
                     m2_ic = "✔" if msg2_sent else f"✘({msg2_err})"
+                    b_ic = f"{chosen_bundle}(✔)" if bundled else f"{chosen_bundle}(✘)"
                     em_ic = f"{chosen_emote}(✔)" if emoted else f"{chosen_emote}(✘)"
                     col = "green" if (msg1_sent and msg2_sent) else "red"
-                    console.print(f"[{col}][{tag}] C{cycle_num} M1:{m1_ic} M2:{m2_ic} E:{em_ic}[/{col}]")
+                    console.print(f"[{col}][{tag}] C{cycle_num} M1:{m1_ic} M2:{m2_ic} B:{b_ic} E:{em_ic}[/{col}]")
 
-                # ৫) বাকি সময়সহ মোট ১৫ সেকেন্ড গ্রুপে দাঁড়িয়ে থাকা
+                # ৬) বাকি সময়সহ মোট ১৫ সেকেন্ড গ্রুপে দাঁড়িয়ে থাকা (এই সময়ে আর বান্ডিল চেঞ্জ হবে না)
                 while time.time() < stay_end and not RF and not gen_stop_event.is_set():
                     if not sock_online:
                         break
@@ -1157,7 +1263,7 @@ def zahid_run_session(sess, gen_stop_event):
                             sock_online = None
                             break
 
-                # ৬) ১৫ সেকেন্ড পর ExiT (অনলাইন রেখেই সোলো হওয়া) -> একবার পারফেক্ট ইনভাইট পাঠানো
+                # ৭) ১৫ সেকেন্ড পর ExiT (অনলাইন রেখেই সোলো হওয়া) -> একবার পারফেক্ট ইনভাইট পাঠানো
                 inv_sent = False
                 if sock_online and not RF and not gen_stop_event.is_set():
                     try:
@@ -1215,6 +1321,10 @@ def zahid_run_session(sess, gen_stop_event):
                 except: pass
                 sock_online = None
                 time.sleep(0.5)
+            finally:
+                # লিভ নেওয়ার সাথে সাথে গ্রুপের বান্ডিল স্টেট রিসেট করা যাতে নতুন গ্রুপে আবার নতুন বান্ডিল নেয়
+                if target_uid and chosen_bundle:
+                    release_group_bundle(target_uid, chosen_bundle)
     finally:
         try:
             if sock_online:
@@ -1355,7 +1465,7 @@ def zahid_main():
 
         bd_cnt = sum(1 for _, _, r in accs if r == "BD")
         ind_cnt = sum(1 for _, _, r in accs if r == "IND")
-        console.print(f"[green]Loaded -> BD:{bd_cnt} | IND:{ind_cnt} | Emotes:{len(EMOTE_IDS)}[/green]")
+        console.print(f"[green]Loaded -> BD:{bd_cnt} | IND:{ind_cnt} | Bundles:{len(BUNDLE_IDS)} | Emotes:{len(EMOTE_IDS)}[/green]")
 
         ready_sessions = zahid_prepare_sessions(accs, use_saved=first_run)
         first_run = False
@@ -1404,6 +1514,8 @@ def zahid_main():
 
         with connected_lock:
             connected_bots.clear()
+        with _bundle_lock:
+            _active_group_bundles.clear()
 
         for reg, acc_fp in RAF.items():
             tok_fp = get_token_file(reg)
