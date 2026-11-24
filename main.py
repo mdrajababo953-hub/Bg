@@ -45,18 +45,18 @@ host = "loginbp.ppmainecoonghj.com"
 GRANT_URL = "https://100067.connect.garena.com/api/v2/oauth/guest/token:grant"
 HEX_KEY = "2ee44819e9b4598845141067b281621874d0d5d7af9d8f7e00c1e54715b7d1e3"
 
-# ================== Timing (অপ্টিমাইজড) ==================
-STAY_TIME               = 20.0  # মোট ২০ সেকেন্ড গ্রুপে থাকবে
-CHAT_AUTH_WAIT          = 0.25
-CHAT_JOIN_WAIT          = 0.25
-CHAT_RETRY_DELAY        = 0.15
+# ================== Timing (ডিফল্ট ১৫ সেকেন্ড + ১টি ইমোট) ==================
+STAY_TIME               = 15.0  # মোট ১৫ সেকেন্ড গ্রুপে থাকবে
+CHAT_AUTH_WAIT          = 0.30
+CHAT_JOIN_WAIT          = 0.35
+CHAT_POST_SEND_WAIT     = 0.20
+CHAT_RETRY_DELAY        = 0.20
 SECOND_MSG_DELAY        = 1.0   # ১ম মেসেজের ১ সেকেন্ড পর ২য় মেসেজ
-BUNDLE_AFTER_MSG_WAIT   = 0.40  # ২য় মেসেজের পর বান্ডিল চেঞ্জের বিরতি
-EMOTE_AFTER_BUNDLE_WAIT = 1.20  # বান্ডিল সেট হওয়ার পর ১ম ইমোটের বিরতি (ইমোট যাতে বান্ডিল ক্যানসেল না করে)
+BUNDLE_AFTER_MSG_WAIT   = 0.35  # ২য় মেসেজের পর বান্ডিল চেঞ্জের বিরতি
+EMOTE_AFTER_BUNDLE_WAIT = 0.90  # বান্ডিল সেট হওয়ার পর ইমোটের বিরতি
 EMOTE_VERIFY_WAIT       = 0.20  # ইমোট পাঠানোর পর সকেট ঠিক আছে কিনা চেক
-SECOND_EMOTE_DELAY      = 7.0   # ১ম ইমোটের ৭ সেকেন্ড পর ২য় ইমোট
-EXIT_BEFORE_INV_WAIT    = 0.40  # ExiT করার পর সোলো হওয়ার বিরতি
-INV_AFTER_WAIT          = 0.30  # ইনভাইট পাঠানোর পর বিরতি
+EXIT_BEFORE_INV_WAIT    = 0.35  # ExiT করার পর সোলো হওয়ার বিরতি
+INV_AFTER_WAIT          = 0.25  # ইনভাইট পাঠানোর পর বিরতি
 JOIN_TIMEOUT            = 2.5
 JOIN_REFRESH            = 0.5
 CYCLE_RETRY_DELAY       = 0.2
@@ -651,15 +651,13 @@ def zahid_decrypt_login_data(raw):
 api_sem = threading.Semaphore(10)
 
 
-def zahid_guest_access(uid, pw, fake_ip=None):
+def zahid_guest_access(uid, pw):
     with api_sem:
         headers = {
             "Host": "100067.connect.garena.com",
             "User-Agent": "GarenaMSDK/4.0.19P4(G011A ;Android 13;en;IN;)",
             "Content-Type": "application/json",
         }
-        if fake_ip:
-            headers["X-Forwarded-For"] = fake_ip
         data = {
             "client_id": 100067,
             "client_secret": HEX_KEY,
@@ -682,7 +680,7 @@ def zahid_guest_access(uid, pw, fake_ip=None):
             return None, None
 
 
-def zahid_major_login(payload, fake_ip=None):
+def zahid_major_login(payload):
     global login_url
     ut = [login_url] + [s for s in LOGIN_SERVERS if s != login_url]
     seen = set()
@@ -698,8 +696,6 @@ def zahid_major_login(payload, fake_ip=None):
         "Content-Type": "application/x-www-form-urlencoded",
         "X-Unity-Version": "2018.4.12f1",
     }
-    if fake_ip:
-        req_h["X-Forwarded-For"] = fake_ip
     for base in ut:
         try:
             u = f"{base.rstrip('/')}/MajorLogin"
@@ -712,7 +708,7 @@ def zahid_major_login(payload, fake_ip=None):
     return None
 
 
-def zahid_get_login_data(url, payload, token, fake_ip=None):
+def zahid_get_login_data(url, payload, token):
     if not url.startswith(("http://", "https://")):
         url = "https://" + url
     headers = {
@@ -725,8 +721,6 @@ def zahid_get_login_data(url, payload, token, fake_ip=None):
         "X-GA-SV": str(int(time.time())),
         "X-Unity-Version": "2018.4.12f1",
     }
-    if fake_ip:
-        headers["X-Forwarded-For"] = fake_ip
     try:
         u = f"{url.rstrip('/')}/GetLoginData"
         r = requests.post(u, data=payload, headers=headers, timeout=20, verify=False)
@@ -882,14 +876,13 @@ def zahid_build_session(uid, password, region):
     reg_hint = str(region or "BD").upper()
     for _ in range(TOKEN_MAX_RETRY):
         try:
-            fake_ip = generate_random_ip(reg_hint)
-            oid, atk = zahid_guest_access(uid, password, fake_ip=fake_ip)
+            oid, atk = zahid_guest_access(uid, password)
             if not atk or not oid:
                 time.sleep(TOKEN_RETRY_DELAY)
                 continue
 
             pyl, used_ip = zahid_build_login_payload(oid, atk, region=reg_hint)
-            resp = zahid_major_login(pyl, fake_ip=used_ip)
+            resp = zahid_major_login(pyl)
             if not resp:
                 time.sleep(TOKEN_RETRY_DELAY)
                 continue
@@ -904,7 +897,7 @@ def zahid_build_session(uid, password, region):
                 "https://client.ind.freefiremobile.com" if real_reg == "IND"
                 else "https://clientbp.ppmainecoonghj.com"
             )
-            ld = zahid_get_login_data(target_url, pyl, ad.token, fake_ip=used_ip)
+            ld = zahid_get_login_data(target_url, pyl, ad.token)
             if not ld:
                 time.sleep(TOKEN_RETRY_DELAY)
                 continue
@@ -948,51 +941,46 @@ def zahid_build_session(uid, password, region):
 
 
 # ================== Chat & Online Socket Helpers ==================
+def _drain_chat_ack(sc, timeout_sec):
+    sc.settimeout(timeout_sec)
+    try:
+        data = sc.recv(4096)
+        if data == b'':
+            return False
+    except socket.timeout:
+        pass
+    return True
+
+
 def _connect_and_auth_chat(ip2, port2, auth, target_uid, chat_code, key, iv):
     sc = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sc.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
     sc.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
-    sc.settimeout(4.0)
+    sc.settimeout(5.0)
     sc.connect((ip2, int(port2)))
 
     sc.sendall(bytes.fromhex(auth))
     time.sleep(CHAT_AUTH_WAIT)
-
-    sc.settimeout(0.25)
-    try:
-        auth_ack = sc.recv(4096)
-        if auth_ack == b'':
-            raise ConnectionError("chat_auth_rejected")
-    except socket.timeout:
-        pass
+    if not _drain_chat_ack(sc, 0.25):
+        raise ConnectionError("chat_auth_rejected")
 
     sc.sendall(xc4_auth_chat(target_uid, chat_code, key, iv))
     time.sleep(CHAT_JOIN_WAIT)
-
-    sc.settimeout(0.15)
-    try:
-        join_ack = sc.recv(4096)
-        if join_ack == b'':
-            raise ConnectionError("chat_join_rejected")
-    except socket.timeout:
-        pass
+    if not _drain_chat_ack(sc, 0.25):
+        raise ConnectionError("chat_join_rejected")
 
     return sc
 
 
 def _send_chat_and_check(sc, pkt):
     sc.sendall(pkt)
-    sc.settimeout(0.40)
-    try:
-        ack = sc.recv(4096)
-        if ack == b'':
-            raise ConnectionError("chat_closed")
-    except socket.timeout:
-        pass
+    time.sleep(CHAT_POST_SEND_WAIT)
+    if not _drain_chat_ack(sc, 0.35):
+        raise ConnectionError("chat_closed")
 
 
 def _send_single_chat_message(ip2, port2, auth, target_uid, chat_code, key, iv, pkt_builder, gen_stop_event):
-    """প্রতিটি মেসেজের জন্য আলাদা ফ্রেশ চ্যাট কানেকশন করে পাঠায় যাতে M1 ও M2 দুটোই ১০০% ডেলিভার হয়"""
+    """প্রতিটি মেসেজের জন্য আলাদা ফ্রেশ চ্যাট কানেকশন করে পাঠায় (BD ও IND দুই সার্ভারেই ১০০% ডেলিভারির জন্য)"""
     last_err = ""
     for _ in range(3):
         if RF or gen_stop_event.is_set():
@@ -1080,6 +1068,7 @@ def zahid_run_session(sess, gen_stop_event):
     rx_buf = bytearray()
     cycle_num = 0
     consecutive_fails = 0
+    consecutive_chat_fails = 0
     last_bundle_id = None
 
     try:
@@ -1115,6 +1104,7 @@ def zahid_run_session(sess, gen_stop_event):
                             ip2 = sess['ip2']; port2 = sess['port2']
                             key = sess['key']; iv = sess['iv']
                             consecutive_fails = 0
+                            consecutive_chat_fails = 0
                     time.sleep(1.5)
                     continue
 
@@ -1214,7 +1204,7 @@ def zahid_run_session(sess, gen_stop_event):
                     gen_stop_event,
                 )
 
-                # ৩) ১ সেকেন্ড বিরতি দিয়ে ২য় মেসেজ পাঠানো (আবার ফ্রেশ চ্যাট সকেট -> ১০০% ডেলিভারি)
+                # ৩) ১ সেকেন্ড বিরতি দিয়ে ২য় মেসেজ পাঠানো (আবার ফ্রেশ চ্যাট সকেট)
                 msg2_sent = False
                 msg2_err = ""
                 if not RF and not gen_stop_event.is_set():
@@ -1227,7 +1217,12 @@ def zahid_run_session(sess, gen_stop_event):
                         gen_stop_event,
                     )
 
-                # ৪) বান্ডিল চেঞ্জ করা (ইমোটের আগে ১.২ সেকেন্ড সময় দেওয়া যাতে ইমোট বান্ডিল ক্যানসেল না করে)
+                if msg1_sent or msg2_sent:
+                    consecutive_chat_fails = 0
+                else:
+                    consecutive_chat_fails += 1
+
+                # ৪) বান্ডিল চেঞ্জ করা (ইমোটের আগে ০.৯০ সেকেন্ড গ্যাপ যাতে বান্ডিল সুন্দরভাবে সেট হয়)
                 bundled = False
                 chosen_bundle, bundle_mode = pick_unique_bundle(target_uid, prev_bundle=last_bundle_id)
                 if not RF and not gen_stop_event.is_set() and chosen_bundle and sock_online:
@@ -1254,68 +1249,42 @@ def zahid_run_session(sess, gen_stop_event):
                         except Exception:
                             bundled = False
 
-                # ৫) বান্ডিল চেঞ্জের পর ১ম র‍্যান্ডম ইমোট মারা
-                emoted1 = False
-                chosen_emote1 = random.choice(EMOTE_IDS) if EMOTE_IDS else 0
-                if not RF and not gen_stop_event.is_set() and chosen_emote1 and sock_online:
+                # ৫) বান্ডিল চেঞ্জের পর ১টি র‍্যান্ডম ইমোট মারা
+                emoted = False
+                chosen_emote = random.choice(EMOTE_IDS) if EMOTE_IDS else 0
+                if not RF and not gen_stop_event.is_set() and chosen_emote and sock_online:
                     try:
-                        emote_pkt1 = xc4_emote_pkt(bot_uid, int(chosen_emote1), key, iv, region=region)
-                        sock_online.sendall(emote_pkt1)
+                        emote_pkt = xc4_emote_pkt(bot_uid, int(chosen_emote), key, iv, region=region)
+                        sock_online.sendall(emote_pkt)
                         sock_online, last_ka = _wait_online(
                             sock_online, rx_buf, EMOTE_VERIFY_WAIT, key, iv, region, last_ka, gen_stop_event
                         )
                         if sock_online:
-                            emoted1 = True
+                            emoted = True
                     except (ConnectionResetError, BrokenPipeError, OSError):
-                        emoted1 = False
+                        emoted = False
                         try: sock_online.close()
                         except Exception: pass
                         sock_online = None
                     except Exception:
-                        emoted1 = False
-
-                # ৬) ১ম ইমোটের ৭ সেকেন্ড পর ২য় র‍্যান্ডম ইমোট মারা
-                emoted2 = False
-                emote2_pool = [e for e in EMOTE_IDS if e != chosen_emote1] or EMOTE_IDS
-                chosen_emote2 = random.choice(emote2_pool) if emote2_pool else 0
-                if not RF and not gen_stop_event.is_set() and chosen_emote2 and sock_online:
-                    sock_online, last_ka = _wait_online(
-                        sock_online, rx_buf, SECOND_EMOTE_DELAY, key, iv, region, last_ka, gen_stop_event
-                    )
-                    if sock_online and not RF and not gen_stop_event.is_set():
-                        try:
-                            emote_pkt2 = xc4_emote_pkt(bot_uid, int(chosen_emote2), key, iv, region=region)
-                            sock_online.sendall(emote_pkt2)
-                            sock_online, last_ka = _wait_online(
-                                sock_online, rx_buf, EMOTE_VERIFY_WAIT, key, iv, region, last_ka, gen_stop_event
-                            )
-                            if sock_online:
-                                emoted2 = True
-                        except (ConnectionResetError, BrokenPipeError, OSError):
-                            emoted2 = False
-                            try: sock_online.close()
-                            except Exception: pass
-                            sock_online = None
-                        except Exception:
-                            emoted2 = False
+                        emoted = False
 
                 with lock:
                     m1_ic = "✔" if msg1_sent else f"✘({msg1_err})"
                     m2_ic = "✔" if msg2_sent else f"✘({msg2_err})"
                     b_ic = f"{chosen_bundle}(✔)" if bundled else f"{chosen_bundle}(✘)"
-                    e1_ic = f"{chosen_emote1}(✔)" if emoted1 else f"{chosen_emote1}(✘)"
-                    e2_ic = f"{chosen_emote2}(✔)" if emoted2 else f"{chosen_emote2}(✘)"
-                    col = "green" if (msg1_sent and msg2_sent and bundled and emoted1 and emoted2) else "yellow"
-                    console.print(f"[{col}][{tag}] C{cycle_num} M1:{m1_ic} M2:{m2_ic} B:{b_ic} E1:{e1_ic} E2:{e2_ic}[/{col}]")
+                    em_ic = f"{chosen_emote}(✔)" if emoted else f"{chosen_emote}(✘)"
+                    col = "green" if (msg1_sent and msg2_sent and bundled and emoted) else "yellow"
+                    console.print(f"[{col}][{tag}] C{cycle_num} M1:{m1_ic} M2:{m2_ic} B:{b_ic} E:{em_ic}[/{col}]")
 
-                # ৭) মোট ২০ সেকেন্ড পূর্ণ হওয়া পর্যন্ত বাকি সময় গ্রুপে দাঁড়িয়ে থাকা
+                # ৬) মোট ১৫ সেকেন্ড পূর্ণ হওয়া পর্যন্ত বাকি সময় গ্রুপে দাঁড়িয়ে থাকা
                 rem_stay = stay_end - time.time()
                 if rem_stay > 0 and sock_online:
                     sock_online, last_ka = _wait_online(
                         sock_online, rx_buf, rem_stay, key, iv, region, last_ka, gen_stop_event
                     )
 
-                # ৮) ২০ সেকেন্ড পর ExiT -> পারফেক্ট ইনভাইট পাঠিয়ে চলে যাওয়া
+                # ৭) ১৫ সেকেন্ড পর ExiT -> পারফেক্ট ইনভাইট পাঠিয়ে চলে যাওয়া
                 inv_sent = False
                 if sock_online and not RF and not gen_stop_event.is_set():
                     try:
@@ -1341,6 +1310,19 @@ def zahid_run_session(sess, gen_stop_event):
                 with lock:
                     inv_ic = "✔" if inv_sent else "✘"
                     console.print(f"[yellow][{tag}] C{cycle_num} LEFT ({STAY_TIME:.0f}s) | INV:{inv_ic}[/yellow]")
+
+                # চ্যাট টোকেন বারবার ফেইল করলে সেশন অটো-রিবিল্ড করবে
+                if consecutive_chat_fails >= 3 and sess.get('password'):
+                    with lock:
+                        console.print(f"[yellow][{tag}] chat failing, rebuilding token...[/yellow]")
+                    try:
+                        if sock_online:
+                            sock_online.close()
+                    except Exception:
+                        pass
+                    sock_online = None
+                    consecutive_fails = 3
+                    consecutive_chat_fails = 0
 
                 time.sleep(0.15)
 
