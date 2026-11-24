@@ -97,7 +97,7 @@ EMOTE_IDS = list(BASE_EMOTE_MAP.values())
 BUNDLE_IDS = [
     914000002,  # Rampage
     914000003,  # Cannibal
-    914042001,  # Frostfire
+    710055006,  # Frostfire
     914051001,  # Dreamspace
     914053001,  # Special
 ]
