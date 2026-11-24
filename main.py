@@ -21,7 +21,7 @@ TOKEN_FILES = {
 }
 
 RF = False
-TOKEN_WORKERS = 10
+TOKEN_WORKERS = 15
 TOKEN_MAX_RETRY = 10
 TOKEN_RETRY_DELAY = 2.0
 TOKEN_REFRESH_INTERVAL = 3 * 60 * 60   # ৩ ঘণ্টা (১০,৮০০ সেকেন্ড)
@@ -45,15 +45,15 @@ host = "loginbp.ppmainecoonghj.com"
 GRANT_URL = "https://100067.connect.garena.com/api/v2/oauth/guest/token:grant"
 HEX_KEY = "2ee44819e9b4598845141067b281621874d0d5d7af9d8f7e00c1e54715b7d1e3"
 
-# ================== Timing (ডিফল্ট ১৫ সেকেন্ড + ১টি ইমোট) ==================
+# ================== Timing ==================
 STAY_TIME               = 15.0  # মোট ১৫ সেকেন্ড গ্রুপে থাকবে
-CHAT_AUTH_WAIT          = 0.30
-CHAT_JOIN_WAIT          = 0.35
-CHAT_POST_SEND_WAIT     = 0.20
-CHAT_RETRY_DELAY        = 0.20
+CHAT_AUTH_WAIT          = 0.28
+CHAT_JOIN_WAIT          = 0.32
+CHAT_POST_SEND_WAIT     = 0.18
+CHAT_RETRY_DELAY        = 0.15
 SECOND_MSG_DELAY        = 1.0   # ১ম মেসেজের ১ সেকেন্ড পর ২য় মেসেজ
 BUNDLE_AFTER_MSG_WAIT   = 0.35  # ২য় মেসেজের পর বান্ডিল চেঞ্জের বিরতি
-EMOTE_AFTER_BUNDLE_WAIT = 0.90  # বান্ডিল সেট হওয়ার পর ইমোটের বিরতি
+EMOTE_AFTER_BUNDLE_WAIT = 0.85  # বান্ডিল সেট হওয়ার পর ইমোটের বিরতি
 EMOTE_VERIFY_WAIT       = 0.20  # ইমোট পাঠানোর পর সকেট ঠিক আছে কিনা চেক
 EXIT_BEFORE_INV_WAIT    = 0.35  # ExiT করার পর সোলো হওয়ার বিরতি
 INV_AFTER_WAIT          = 0.25  # ইনভাইট পাঠানোর পর বিরতি
@@ -97,7 +97,7 @@ EMOTE_IDS = list(BASE_EMOTE_MAP.values())
 BUNDLE_IDS = [
     914000002,  # Rampage
     914000003,  # Cannibal
-    710055006,  # Frostfire
+    914042001,  # Frostfire
     914051001,  # Dreamspace
     914053001,  # Special
 ]
@@ -980,7 +980,7 @@ def _send_chat_and_check(sc, pkt):
 
 
 def _send_single_chat_message(ip2, port2, auth, target_uid, chat_code, key, iv, pkt_builder, gen_stop_event):
-    """প্রতিটি মেসেজের জন্য আলাদা ফ্রেশ চ্যাট কানেকশন করে পাঠায় (BD ও IND দুই সার্ভারেই ১০০% ডেলিভারির জন্য)"""
+    """প্রতিটি মেসেজের জন্য ফ্রেশ চ্যাট সকেট (ফেইল করলে সর্বোচ্চ ৩ বার ট্রাই করবে)"""
     last_err = ""
     for _ in range(3):
         if RF or gen_stop_event.is_set():
@@ -1048,6 +1048,40 @@ def _wait_online(sock_online, rx_buf, duration, key, iv, region, last_ka, gen_st
                 except Exception: pass
                 return None, last_ka
     return sock_online, last_ka
+
+
+def _send_online_with_retry(sock_online, rx_buf, pkt_bytes, verify_wait, ip, port, auth_online, key, iv, region, last_ka, gen_stop_event):
+    """প্যাকেট পাঠিয়ে সকেট চেক করে; ১ম বার ফেইল করলে সকেট রিকানেক্ট করে ২য় বার ট্রাই করে"""
+    for attempt in range(2):
+        if RF or gen_stop_event.is_set():
+            return False, sock_online, last_ka
+        if sock_online is None:
+            try:
+                sock_online = _open_persistent_online(ip, port, auth_online, key, iv, region)
+                rx_buf.clear()
+                last_ka = time.time()
+            except Exception:
+                sock_online = None
+                time.sleep(0.15)
+                continue
+        try:
+            sock_online.sendall(pkt_bytes)
+            sock_online, last_ka = _wait_online(
+                sock_online, rx_buf, verify_wait, key, iv, region, last_ka, gen_stop_event
+            )
+            if sock_online is not None:
+                return True, sock_online, last_ka
+        except (ConnectionResetError, BrokenPipeError, OSError):
+            try:
+                if sock_online: sock_online.close()
+            except Exception:
+                pass
+            sock_online = None
+        except Exception:
+            if attempt == 1:
+                return False, sock_online, last_ka
+        time.sleep(0.12)
+    return False, sock_online, last_ka
 
 
 # ================== PHASE 2: Persistent Online Session ==================
@@ -1196,7 +1230,7 @@ def zahid_run_session(sess, gen_stop_event):
                     sock_online, rx_buf, 0.12, key, iv, region, last_ka, gen_stop_event
                 )
 
-                # ২) ১ম মেসেজ পাঠানো (ফ্রেশ চ্যাট সকেট)
+                # ২) ১ম মেসেজ পাঠানো (ফ্রেশ চ্যাট সকেট, ৩ বার রিট্রাই)
                 msg1_text = f"[c][b][{ArA_CoLor()}]{GREETING_1}"
                 msg1_sent, msg1_err = _send_single_chat_message(
                     ip2, port2, auth, target_uid, chat_code, key, iv,
@@ -1204,7 +1238,7 @@ def zahid_run_session(sess, gen_stop_event):
                     gen_stop_event,
                 )
 
-                # ৩) ১ সেকেন্ড বিরতি দিয়ে ২য় মেসেজ পাঠানো (আবার ফ্রেশ চ্যাট সকেট)
+                # ৩) ১ সেকেন্ড বিরতি দিয়ে ২য় মেসেজ পাঠানো (ফ্রেশ চ্যাট সকেট, ৩ বার রিট্রাই)
                 msg2_sent = False
                 msg2_err = ""
                 if not RF and not gen_stop_event.is_set():
@@ -1222,52 +1256,31 @@ def zahid_run_session(sess, gen_stop_event):
                 else:
                     consecutive_chat_fails += 1
 
-                # ৪) বান্ডিল চেঞ্জ করা (ইমোটের আগে ০.৯০ সেকেন্ড গ্যাপ যাতে বান্ডিল সুন্দরভাবে সেট হয়)
+                # ৪) বান্ডিল চেঞ্জ করা (ফেইল করলে ২য় বার ট্রাই করবে)
                 bundled = False
                 chosen_bundle, bundle_mode = pick_unique_bundle(target_uid, prev_bundle=last_bundle_id)
-                if not RF and not gen_stop_event.is_set() and chosen_bundle and sock_online:
-                    sock_online, last_ka = _wait_online(
-                        sock_online, rx_buf, BUNDLE_AFTER_MSG_WAIT, key, iv, region, last_ka, gen_stop_event
-                    )
+                if not RF and not gen_stop_event.is_set() and chosen_bundle:
                     if sock_online:
-                        try:
-                            bundle_pkt = xc4_bundle_pkt(
-                                int(chosen_bundle), key, iv, region=region, mode=bundle_mode
-                            )
-                            sock_online.sendall(bundle_pkt)
-                            sock_online, last_ka = _wait_online(
-                                sock_online, rx_buf, EMOTE_AFTER_BUNDLE_WAIT, key, iv, region, last_ka, gen_stop_event
-                            )
-                            if sock_online:
-                                bundled = True
-                                last_bundle_id = chosen_bundle
-                        except (ConnectionResetError, BrokenPipeError, OSError):
-                            bundled = False
-                            try: sock_online.close()
-                            except Exception: pass
-                            sock_online = None
-                        except Exception:
-                            bundled = False
+                        sock_online, last_ka = _wait_online(
+                            sock_online, rx_buf, BUNDLE_AFTER_MSG_WAIT, key, iv, region, last_ka, gen_stop_event
+                        )
+                    bundle_pkt = xc4_bundle_pkt(int(chosen_bundle), key, iv, region=region, mode=bundle_mode)
+                    bundled, sock_online, last_ka = _send_online_with_retry(
+                        sock_online, rx_buf, bundle_pkt, EMOTE_AFTER_BUNDLE_WAIT,
+                        ip, port, auth_online, key, iv, region, last_ka, gen_stop_event
+                    )
+                    if bundled:
+                        last_bundle_id = chosen_bundle
 
-                # ৫) বান্ডিল চেঞ্জের পর ১টি র‍্যান্ডম ইমোট মারা
+                # ৫) বান্ডিল চেঞ্জের পর ১টি র‍্যান্ডম ইমোট মারা (ফেইল করলে ২য় বার ট্রাই করবে)
                 emoted = False
                 chosen_emote = random.choice(EMOTE_IDS) if EMOTE_IDS else 0
-                if not RF and not gen_stop_event.is_set() and chosen_emote and sock_online:
-                    try:
-                        emote_pkt = xc4_emote_pkt(bot_uid, int(chosen_emote), key, iv, region=region)
-                        sock_online.sendall(emote_pkt)
-                        sock_online, last_ka = _wait_online(
-                            sock_online, rx_buf, EMOTE_VERIFY_WAIT, key, iv, region, last_ka, gen_stop_event
-                        )
-                        if sock_online:
-                            emoted = True
-                    except (ConnectionResetError, BrokenPipeError, OSError):
-                        emoted = False
-                        try: sock_online.close()
-                        except Exception: pass
-                        sock_online = None
-                    except Exception:
-                        emoted = False
+                if not RF and not gen_stop_event.is_set() and chosen_emote:
+                    emote_pkt = xc4_emote_pkt(bot_uid, int(chosen_emote), key, iv, region=region)
+                    emoted, sock_online, last_ka = _send_online_with_retry(
+                        sock_online, rx_buf, emote_pkt, EMOTE_VERIFY_WAIT,
+                        ip, port, auth_online, key, iv, region, last_ka, gen_stop_event
+                    )
 
                 with lock:
                     m1_ic = "✔" if msg1_sent else f"✘({msg1_err})"
@@ -1284,47 +1297,45 @@ def zahid_run_session(sess, gen_stop_event):
                         sock_online, rx_buf, rem_stay, key, iv, region, last_ka, gen_stop_event
                     )
 
-                # ৭) ১৫ সেকেন্ড পর ExiT -> পারফেক্ট ইনভাইট পাঠিয়ে চলে যাওয়া
+                # ৭) ১৫ সেকেন্ড পর ExiT -> পারফেক্ট ইনভাইট পাঠানো (ফেইল করলে ২য় বার ট্রাই করবে)
                 inv_sent = False
-                if sock_online and not RF and not gen_stop_event.is_set():
-                    try:
-                        sock_online.sendall(region_pkt(ExiT(key, iv), region))
-                        sock_online, last_ka = _wait_online(
-                            sock_online, rx_buf, EXIT_BEFORE_INV_WAIT, key, iv, region, last_ka, gen_stop_event
-                        )
-
-                        if sock_online:
-                            inv_pkt = xc4_perfect_invite_pkt(
-                                bot_uid, target_uid, key, iv,
-                                region=region, badge_value=INVITE_BADGE_VALUE,
-                            )
-                            sock_online.sendall(inv_pkt)
+                if not RF and not gen_stop_event.is_set():
+                    if sock_online:
+                        try:
+                            sock_online.sendall(region_pkt(ExiT(key, iv), region))
                             sock_online, last_ka = _wait_online(
-                                sock_online, rx_buf, INV_AFTER_WAIT, key, iv, region, last_ka, gen_stop_event
+                                sock_online, rx_buf, EXIT_BEFORE_INV_WAIT, key, iv, region, last_ka, gen_stop_event
                             )
-                            if sock_online:
-                                inv_sent = True
-                    except Exception:
-                        inv_sent = False
+                        except Exception:
+                            try: sock_online.close()
+                            except Exception: pass
+                            sock_online = None
+
+                    inv_pkt = xc4_perfect_invite_pkt(
+                        bot_uid, target_uid, key, iv,
+                        region=region, badge_value=INVITE_BADGE_VALUE,
+                    )
+                    inv_sent, sock_online, last_ka = _send_online_with_retry(
+                        sock_online, rx_buf, inv_pkt, INV_AFTER_WAIT,
+                        ip, port, auth_online, key, iv, region, last_ka, gen_stop_event
+                    )
 
                 with lock:
                     inv_ic = "✔" if inv_sent else "✘"
                     console.print(f"[yellow][{tag}] C{cycle_num} LEFT ({STAY_TIME:.0f}s) | INV:{inv_ic}[/yellow]")
 
-                # চ্যাট টোকেন বারবার ফেইল করলে সেশন অটো-রিবিল্ড করবে
                 if consecutive_chat_fails >= 3 and sess.get('password'):
                     with lock:
                         console.print(f"[yellow][{tag}] chat failing, rebuilding token...[/yellow]")
                     try:
-                        if sock_online:
-                            sock_online.close()
+                        if sock_online: sock_online.close()
                     except Exception:
                         pass
                     sock_online = None
                     consecutive_fails = 3
                     consecutive_chat_fails = 0
 
-                time.sleep(0.15)
+                time.sleep(0.1)
 
             except Exception as e:
                 with lock:
@@ -1348,7 +1359,7 @@ def zahid_run_session(sess, gen_stop_event):
         zahid_remove_bot(bot_uid)
 
 
-# ================== Account Loading ==================
+# ================== Account Loading (BD + IND একসাথে) ==================
 def zahid_load_file(fp):
     accs = []
     try:
@@ -1367,43 +1378,16 @@ def zahid_load_file(fp):
     return accs
 
 
-def zahid_load_by_region():
-    """দুই সার্ভারের (BD ও IND) অ্যাকাউন্ট আলাদা আলাদা লোড করে"""
-    by_reg = {}
+def zahid_load_all():
+    all_ = []
     for region, fp in RAF.items():
         items = [(u, p, region) for u, p in zahid_load_file(fp)]
         if not items:
             for u, s in zahid_load_saved_tokens(region).items():
                 items.append((u, None, s.get('region', region)))
-        random.shuffle(items)
-        by_reg[region] = items
-    return by_reg
-
-
-def select_target_region(by_reg):
-    """রান করার পর জিজ্ঞেস করবে BD না IND চালাবে (একসাথে ২ সার্ভার নয়)"""
-    env_reg = os.environ.get("BOT_REGION", "").strip().upper()
-    if env_reg in ("BD", "IND"):
-        console.print(f"[bold cyan]BOT_REGION env detected -> {env_reg}[/bold cyan]")
-        return env_reg
-
-    console.print("\n[bold cyan]কোন সার্ভারের আইডি অনলাইন করতে চান? (একসাথে শুধু একটি সার্ভার চলবে)[/bold cyan]")
-    console.print(f"[green]  [1] BD  (Bangladesh) -> {len(by_reg.get('BD', []))} accounts[/green]")
-    console.print(f"[yellow]  [2] IND (India)      -> {len(by_reg.get('IND', []))} accounts[/yellow]")
-
-    while True:
-        try:
-            choice = input("Select Server (1=BD / 2=IND): ").strip().upper()
-        except EOFError:
-            fallback = "BD" if by_reg.get("BD") else "IND"
-            console.print(f"[yellow]Non-interactive terminal detected! Auto-selected: {fallback} (or set BOT_REGION env)[/yellow]")
-            return fallback
-
-        if choice in ("1", "BD", "BANGLADESH"):
-            return "BD"
-        if choice in ("2", "IND", "IN", "INDIA"):
-            return "IND"
-        console.print("[red]ভুল ইনপুট! শুধু 1 (BD) অথবা 2 (IND) দিন।[/red]")
+        all_.extend(items)
+    random.shuffle(all_)
+    return all_
 
 
 # ================== Session Prep Helper ==================
@@ -1492,35 +1476,23 @@ def zahid_prepare_sessions(accs, use_saved=True):
     return ready_sessions
 
 
-# ================== MAIN (Single Server Online + 3h Token Refresh) ==================
+# ================== MAIN (BD + IND একসাথে + 3h Token Refresh) ==================
 def zahid_main():
     global RF
-
-    by_reg = zahid_load_by_region()
-    bd_cnt = len(by_reg.get("BD", []))
-    ind_cnt = len(by_reg.get("IND", []))
-
-    if bd_cnt == 0 and ind_cnt == 0:
-        console.print("[red]No accounts in accounts.txt / accounts_ind.txt[/red]")
-        return
-
-    console.print(f"[green]Loaded Both Servers -> BD:{bd_cnt} | IND:{ind_cnt} | Bundles:{len(BUNDLE_IDS)} | Emotes:{len(EMOTE_IDS)}[/green]")
-
-    selected_region = select_target_region(by_reg)
-    console.print(f"[bold green]Selected Server: {selected_region} (শুধু {selected_region} অনলাইন হবে)[/bold green]")
-
     first_run = True
 
     while not RF:
-        by_reg = zahid_load_by_region()
-        accs = by_reg.get(selected_region, [])
-
+        accs = zahid_load_all()
         if not accs:
-            console.print(f"[red]No accounts found for selected server: {selected_region}[/red]")
+            console.print("[red]No accounts in accounts.txt / accounts_ind.txt[/red]")
             return
 
-        has_pw = any(pwd for _, pwd, _ in accs)
-        use_saved = first_run or (not has_pw)
+        bd_cnt = sum(1 for _, _, r in accs if r == "BD")
+        ind_cnt = sum(1 for _, _, r in accs if r == "IND")
+        console.print(f"[green]Loaded -> BD:{bd_cnt} | IND:{ind_cnt} | Bundles:{len(BUNDLE_IDS)} | Emotes:{len(EMOTE_IDS)}[/green]")
+
+        has_any_pw = any(pwd for _, pwd, _ in accs)
+        use_saved = first_run or (not has_any_pw)
         ready_sessions = zahid_prepare_sessions(accs, use_saved=use_saved)
         first_run = False
 
@@ -1546,7 +1518,7 @@ def zahid_main():
             except Exception as e:
                 console.print(f"[red]launch err {sess.get('uid')}: {type(e).__name__}[/red]")
 
-        console.print(f"[bold green]ONLINE: {launched} bots ({selected_region} ONLY | 3h Refresh)[/bold green]")
+        console.print(f"[bold green]ONLINE: {launched} bots (BD+IND | 3h Refresh)[/bold green]")
 
         refresh_at = time.time() + TOKEN_REFRESH_INTERVAL
         while time.time() < refresh_at and not RF:
@@ -1563,7 +1535,7 @@ def zahid_main():
         if RF:
             break
 
-        console.print(f"\n[yellow]3h Refresh: resetting {selected_region} token file...[/yellow]")
+        console.print(f"\n[yellow]3h Refresh: resetting token files...[/yellow]")
         gen_stop_event.set()
         for t in bot_threads:
             t.join(timeout=3.0)
@@ -1573,13 +1545,15 @@ def zahid_main():
         with _bundle_lock:
             _active_group_bundles.clear()
 
-        tok_fp = get_token_file(selected_region)
-        if has_pw and os.path.exists(tok_fp):
-            try:
-                os.remove(tok_fp)
-                console.print(f"[yellow][{selected_region}] Deleted {tok_fp}[/yellow]")
-            except Exception as ex:
-                console.print(f"[red][{selected_region}] Del err {tok_fp}: {ex}[/red]")
+        for reg, acc_fp in RAF.items():
+            tok_fp = get_token_file(reg)
+            has_pw = bool(zahid_load_file(acc_fp))
+            if has_pw and os.path.exists(tok_fp):
+                try:
+                    os.remove(tok_fp)
+                    console.print(f"[yellow][{reg}] Deleted {tok_fp}[/yellow]")
+                except Exception as ex:
+                    console.print(f"[red][{reg}] Del err {tok_fp}: {ex}[/red]")
 
 
 if __name__ == "__main__":
