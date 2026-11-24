@@ -21,7 +21,7 @@ TOKEN_FILES = {
 }
 
 RF = False
-TOKEN_WORKERS = 15
+TOKEN_WORKERS = 10
 TOKEN_MAX_RETRY = 10
 TOKEN_RETRY_DELAY = 2.0
 TOKEN_REFRESH_INTERVAL = 3 * 60 * 60   # ৩ ঘণ্টা (১০,৮০০ সেকেন্ড)
@@ -45,18 +45,18 @@ host = "loginbp.ppmainecoonghj.com"
 GRANT_URL = "https://100067.connect.garena.com/api/v2/oauth/guest/token:grant"
 HEX_KEY = "2ee44819e9b4598845141067b281621874d0d5d7af9d8f7e00c1e54715b7d1e3"
 
-# ================== Timing ==================
+# ================== Timing (অপ্টিমাইজড) ==================
 STAY_TIME               = 20.0  # মোট ২০ সেকেন্ড গ্রুপে থাকবে
 CHAT_AUTH_WAIT          = 0.25
 CHAT_JOIN_WAIT          = 0.25
 CHAT_RETRY_DELAY        = 0.15
 SECOND_MSG_DELAY        = 1.0   # ১ম মেসেজের ১ সেকেন্ড পর ২য় মেসেজ
-BUNDLE_AFTER_MSG_WAIT   = 0.30  # ২য় মেসেজের পর বান্ডিল চেঞ্জের বিরতি
-EMOTE_AFTER_BUNDLE_WAIT = 0.45  # বান্ডিল চেঞ্জের পর ১ম ইমোটের বিরতি
-EMOTE_VERIFY_WAIT       = 0.15  # ইমোট পাঠানোর পর সকেট ঠিক আছে কিনা চেক
+BUNDLE_AFTER_MSG_WAIT   = 0.40  # ২য় মেসেজের পর বান্ডিল চেঞ্জের বিরতি
+EMOTE_AFTER_BUNDLE_WAIT = 1.20  # বান্ডিল সেট হওয়ার পর ১ম ইমোটের বিরতি (ইমোট যাতে বান্ডিল ক্যানসেল না করে)
+EMOTE_VERIFY_WAIT       = 0.20  # ইমোট পাঠানোর পর সকেট ঠিক আছে কিনা চেক
 SECOND_EMOTE_DELAY      = 7.0   # ১ম ইমোটের ৭ সেকেন্ড পর ২য় ইমোট
-EXIT_BEFORE_INV_WAIT    = 0.35  # ExiT করার পর সোলো হওয়ার বিরতি
-INV_AFTER_WAIT          = 0.25  # ইনভাইট পাঠানোর পর বিরতি
+EXIT_BEFORE_INV_WAIT    = 0.40  # ExiT করার পর সোলো হওয়ার বিরতি
+INV_AFTER_WAIT          = 0.30  # ইনভাইট পাঠানোর পর বিরতি
 JOIN_TIMEOUT            = 2.5
 JOIN_REFRESH            = 0.5
 CYCLE_RETRY_DELAY       = 0.2
@@ -67,7 +67,7 @@ INVITE_BADGE_VALUE = 32768
 GREETING_1 = "FREE GLORY BOT"
 
 GREETING_2 = (
-    "[B][00BFFF]■ GLORY STORE ■\n"
+    "[B][00BFFF]■ ARIYAN STORE ■\n"
     "[B][00BFFF]────────────────\n"
     "[B][FFD700] search telegram channel\n"
     "[B][00BFFF]└─[00FF00]JOIN CHANNEL \n"
@@ -183,8 +183,7 @@ def pick_unique_bundle(target_uid, prev_bundle=None):
         chosen = random.choice(candidates)
         used_counts[chosen] = used_counts.get(chosen, 0) + 1
 
-    mode = random.choice([1, 2]) if chosen == 914051001 else 1
-    return chosen, mode
+    return chosen, 1
 
 
 def release_group_bundle(target_uid, bundle_id):
@@ -959,7 +958,7 @@ def _connect_and_auth_chat(ip2, port2, auth, target_uid, chat_code, key, iv):
     sc.sendall(bytes.fromhex(auth))
     time.sleep(CHAT_AUTH_WAIT)
 
-    sc.settimeout(0.2)
+    sc.settimeout(0.25)
     try:
         auth_ack = sc.recv(4096)
         if auth_ack == b'':
@@ -969,18 +968,51 @@ def _connect_and_auth_chat(ip2, port2, auth, target_uid, chat_code, key, iv):
 
     sc.sendall(xc4_auth_chat(target_uid, chat_code, key, iv))
     time.sleep(CHAT_JOIN_WAIT)
+
+    sc.settimeout(0.15)
+    try:
+        join_ack = sc.recv(4096)
+        if join_ack == b'':
+            raise ConnectionError("chat_join_rejected")
+    except socket.timeout:
+        pass
+
     return sc
 
 
 def _send_chat_and_check(sc, pkt):
     sc.sendall(pkt)
-    sc.settimeout(0.30)
+    sc.settimeout(0.40)
     try:
         ack = sc.recv(4096)
         if ack == b'':
             raise ConnectionError("chat_closed")
     except socket.timeout:
         pass
+
+
+def _send_single_chat_message(ip2, port2, auth, target_uid, chat_code, key, iv, pkt_builder, gen_stop_event):
+    """প্রতিটি মেসেজের জন্য আলাদা ফ্রেশ চ্যাট কানেকশন করে পাঠায় যাতে M1 ও M2 দুটোই ১০০% ডেলিভার হয়"""
+    last_err = ""
+    for _ in range(3):
+        if RF or gen_stop_event.is_set():
+            return False, "stopped"
+        sc = None
+        try:
+            sc = _connect_and_auth_chat(ip2, port2, auth, target_uid, chat_code, key, iv)
+            pkt = pkt_builder()
+            _send_chat_and_check(sc, pkt)
+            return True, ""
+        except Exception as ex:
+            last_err = type(ex).__name__
+            time.sleep(CHAT_RETRY_DELAY)
+        finally:
+            try:
+                if sc:
+                    sc.close()
+            except Exception:
+                pass
+    return False, last_err
 
 
 def _open_persistent_online(ip, port, auth_online, key, iv, region):
@@ -1087,7 +1119,6 @@ def zahid_run_session(sess, gen_stop_event):
                     continue
 
             cycle_num += 1
-            sock_chat = None
             target_uid = None
             chat_code = None
             chosen_bundle = None
@@ -1170,64 +1201,33 @@ def zahid_run_session(sess, gen_stop_event):
                 with lock:
                     console.print(f"[cyan][{tag}] C{cycle_num} JOIN->{target_uid}[/cyan]")
 
-                # ২) ১ম মেসেজ পাঠানো
-                msg1_sent = False
-                msg1_err = ""
+                # জয়েন করার পর বাফার একটু ক্লিয়ার করে নেওয়া
+                sock_online, last_ka = _wait_online(
+                    sock_online, rx_buf, 0.12, key, iv, region, last_ka, gen_stop_event
+                )
+
+                # ২) ১ম মেসেজ পাঠানো (ফ্রেশ চ্যাট সকেট)
                 msg1_text = f"[c][b][{ArA_CoLor()}]{GREETING_1}"
+                msg1_sent, msg1_err = _send_single_chat_message(
+                    ip2, port2, auth, target_uid, chat_code, key, iv,
+                    lambda: xc4_send_squad_msg(msg1_text, target_uid, key, iv, region=region),
+                    gen_stop_event,
+                )
 
-                for _ in range(3):
-                    if RF or gen_stop_event.is_set():
-                        break
-                    try:
-                        sock_chat = _connect_and_auth_chat(ip2, port2, auth, target_uid, chat_code, key, iv)
-                        pkt1 = xc4_send_squad_msg(msg1_text, target_uid, key, iv, region=region)
-                        _send_chat_and_check(sock_chat, pkt1)
-                        msg1_sent = True
-                        msg1_err = ""
-                        break
-                    except Exception as ex:
-                        msg1_err = type(ex).__name__
-                        try:
-                            if sock_chat: sock_chat.close()
-                        except Exception:
-                            pass
-                        sock_chat = None
-                        time.sleep(CHAT_RETRY_DELAY)
-
-                # ৩) ১ সেকেন্ড পর ২য় মেসেজ পাঠানো
+                # ৩) ১ সেকেন্ড বিরতি দিয়ে ২য় মেসেজ পাঠানো (আবার ফ্রেশ চ্যাট সকেট -> ১০০% ডেলিভারি)
                 msg2_sent = False
                 msg2_err = ""
                 if not RF and not gen_stop_event.is_set():
                     sock_online, last_ka = _wait_online(
                         sock_online, rx_buf, SECOND_MSG_DELAY, key, iv, region, last_ka, gen_stop_event
                     )
-                    for _ in range(3):
-                        if RF or gen_stop_event.is_set():
-                            break
-                        try:
-                            if sock_chat is None:
-                                sock_chat = _connect_and_auth_chat(ip2, port2, auth, target_uid, chat_code, key, iv)
-                            pkt2 = xc4_send_squad_msg(GREETING_2, target_uid, key, iv, region=region)
-                            _send_chat_and_check(sock_chat, pkt2)
-                            msg2_sent = True
-                            msg2_err = ""
-                            break
-                        except Exception as ex:
-                            msg2_err = type(ex).__name__
-                            try:
-                                if sock_chat: sock_chat.close()
-                            except Exception:
-                                pass
-                            sock_chat = None
-                            time.sleep(CHAT_RETRY_DELAY)
+                    msg2_sent, msg2_err = _send_single_chat_message(
+                        ip2, port2, auth, target_uid, chat_code, key, iv,
+                        lambda: xc4_send_squad_msg(GREETING_2, target_uid, key, iv, region=region),
+                        gen_stop_event,
+                    )
 
-                try:
-                    if sock_chat: sock_chat.close()
-                except Exception:
-                    pass
-                sock_chat = None
-
-                # ৪) বান্ডিল চেঞ্জ করা
+                # ৪) বান্ডিল চেঞ্জ করা (ইমোটের আগে ১.২ সেকেন্ড সময় দেওয়া যাতে ইমোট বান্ডিল ক্যানসেল না করে)
                 bundled = False
                 chosen_bundle, bundle_mode = pick_unique_bundle(target_uid, prev_bundle=last_bundle_id)
                 if not RF and not gen_stop_event.is_set() and chosen_bundle and sock_online:
@@ -1342,15 +1342,11 @@ def zahid_run_session(sess, gen_stop_event):
                     inv_ic = "✔" if inv_sent else "✘"
                     console.print(f"[yellow][{tag}] C{cycle_num} LEFT ({STAY_TIME:.0f}s) | INV:{inv_ic}[/yellow]")
 
-                time.sleep(0.1)
+                time.sleep(0.15)
 
             except Exception as e:
                 with lock:
                     console.print(f"[red][{tag}] err:{type(e).__name__}[/red]")
-                try:
-                    if sock_chat: sock_chat.close()
-                except Exception:
-                    pass
                 try:
                     if sock_online: sock_online.close()
                 except Exception:
