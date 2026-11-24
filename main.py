@@ -78,19 +78,17 @@ BOT_CRASH_RESTART_DELAY = 2.0
 # ================== Invite Badge, Greeting & 10 Evo Emotes ==================
 INVITE_BADGE_VALUE = 32768     # 32768 = আসল V-Badge (চাইলে 1048576 দিতে পারেন)
 
-GREETING_1 = "Hi, I am ARIYAN"
+GREETING_1 = "FREE GLORY BOT"
 
 GREETING_2 = (
     "[B][00BFFF]■ ARIYAN STORE ■\n"
     "[B][00BFFF]────────────────\n"
-    "[B][FFD700]কি কি পাবেন\n"
-    "[B][00BFFF]├─[00FF00]TCP Bot\n"
-    "[B][00BFFF]├─[00FF00]Glory Bot\n"
-    "[B][00BFFF]└─[00FF00]Carding Diamond\n"
+    "[B][FFD700] search telegram channel\n"
+    "[B][00BFFF]└─[00FF00]JOIN CHANNEL \n"
     "[B][00BFFF]────────────────\n"
-    "[B][FFD700]CONTACT INFO\n"
-    "[B][00BFFF]├─[00FF00]Telegram [FFFFFF]@AriyanPrime_A9x\n"
-    "[B][00BFFF]└─[00FF00]WhatsApp [FFFFFF]⓪①⑥①⓪③⑥⑨①①⑤\n"
+    "[B][FFD700]Fast join telegram\n"
+    "[B][00BFFF]├─[00FF00]Telegram [FFFFFF]@Ariyan_world_A9x\n"
+    "[B][00BFFF]└─[00FF00]Telegram \n [FFFFFF]https://t.me/Ariyan_world_A9x\n"
     "[B][00BFFF]────────────────"
 )
 
