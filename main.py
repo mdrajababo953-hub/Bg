@@ -67,7 +67,7 @@ INVITE_BADGE_VALUE = 32768
 GREETING_1 = "FREE GLORY BOT"
 
 GREETING_2 = (
-    "[B][00BFFF]■ ARIYAN STORE ■\n"
+    "[B][00BFFF]■ GLORY STORE ■\n"
     "[B][00BFFF]────────────────\n"
     "[B][FFD700] search telegram channel\n"
     "[B][00BFFF]└─[00FF00]JOIN CHANNEL \n"
