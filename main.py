@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 import json, base64, time, os, random, threading, queue, socket, struct, traceback, uuid
-from datetime import datetime, timezone
+from datetime import datetime
 
 import urllib3, requests
 from protobuf_decoder.protobuf_decoder import Parser
@@ -33,7 +33,6 @@ LOGIN_SERVERS = ["https://loginbp.ppmainecoonghj.com/"]
 
 console = Console()
 lock = threading.Lock()
-file_lock = threading.Lock()
 connected_bots = {}
 connected_lock = threading.Lock()
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -124,123 +123,25 @@ AVATAR_LIST = [
     902037031, 902042011, 902053016, 902053018
 ]
 
-# ================== রিজিয়ন অনুযায়ী র‍্যান্ডম আইপি ও পূর্ণাঙ্গ ডিভাইস প্রোফাইল জেনারেটর ==================
-BD_IP_PREFIXES = [
-    "42.0", "59.152", "103.108", "114.130", "118.179",
-    "27.147", "43.224", "182.160", "103.135", "103.148", "37.111"
-]
-IND_IP_PREFIXES = [
-    "27.61", "49.36", "106.193", "157.32", "117.192",
-    "122.160", "182.64", "152.58", "103.214", "171.76"
-]
+# ================== রিজিয়ন অনুযায়ী র‍্যান্ডম আইপি ও ডিভাইস জেনারেটর ==================
+BD_IP_PREFIXES = ["59.152", "103.108", "114.130", "118.179", "27.147", "43.224", "182.160", "103.135"]
+IND_IP_PREFIXES = ["27.61", "49.36", "106.193", "157.32", "117.192", "122.160", "182.64", "152.58"]
 
-# (Model, CPU_Freq, Cores, RAM_MB, GPU, OpenGL, Width, Height, DPI)
-DEVICE_POOL = [
-    ("Xiaomi 2312DRAABI", 2400, 8, 7650, "Adreno (TM) 710", "OpenGL ES 3.2 V@0615.98", 2712, 1220, "446"),
-    ("Xiaomi 22101316I", 2600, 8, 5820, "Mali-G68 MC4", "OpenGL ES 3.2 v1.r38p1", 2400, 1080, "395"),
-    ("Xiaomi 23076RN4BI", 2200, 8, 5590, "Adreno (TM) 613", "OpenGL ES 3.2 V@0530.51", 2460, 1080, "396"),
-    ("Xiaomi 24040RN64Y", 2000, 8, 3840, "Mali-G52 MC2", "OpenGL ES 3.2 v1.r32p1", 1640, 720, "268"),
-    ("Xiaomi 23049PCD8G", 2910, 8, 11420, "Adreno (TM) 725", "OpenGL ES 3.2 V@0676.12", 2400, 1080, "395"),
-    ("samsung SM-A155F", 2200, 8, 5586, "Mali-G57 MC2", "OpenGL ES 3.2 v1.r38p1", 2340, 1080, "396"),
-    ("samsung SM-A356E", 2400, 8, 7680, "Xclipse 530", "OpenGL ES 3.2 v1.r43p0", 2340, 1080, "390"),
-    ("samsung SM-A546E", 2400, 8, 7720, "Mali-G68 MP5", "OpenGL ES 3.2 v1.r41p0", 2340, 1080, "403"),
-    ("samsung SM-M346B", 2400, 8, 5710, "Mali-G68 MP4", "OpenGL ES 3.2 v1.r38p1", 2340, 1080, "396"),
-    ("samsung SM-S911B", 3360, 8, 7890, "Adreno (TM) 740", "OpenGL ES 3.2 V@0702.00", 2340, 1080, "425"),
-    ("realme RMX3830", 2000, 8, 3810, "Mali-G57", "OpenGL ES 3.2 v1.r34p0", 1600, 720, "260"),
-    ("realme RMX3760", 2200, 8, 5690, "Mali-G57 MC2", "OpenGL ES 3.2 v1.r38p1", 2400, 1080, "391"),
-    ("realme RMX3840", 2600, 8, 7740, "Mali-G68 MC4", "OpenGL ES 3.2 v1.r40p0", 2412, 1080, "394"),
-    ("realme RMX3997", 2300, 8, 7560, "Adreno (TM) 610", "OpenGL ES 3.2 V@0530.54", 2400, 1080, "392"),
-    ("vivo V2310", 2200, 8, 7610, "Adreno (TM) 619", "OpenGL ES 3.2 V@0530.62", 2408, 1080, "401"),
-    ("vivo V2247", 2400, 8, 7540, "Adreno (TM) 610", "OpenGL ES 3.2 V@0502.00", 2408, 1080, "401"),
-    ("vivo V2334", 2630, 8, 7820, "Adreno (TM) 720", "OpenGL ES 3.2 V@0676.00", 2400, 1080, "388"),
-    ("vivo I2209", 2200, 8, 5620, "Adreno (TM) 619", "OpenGL ES 3.2 V@0530.51", 2408, 1080, "401"),
-    ("OPPO CPH2565", 2200, 8, 7590, "Mali-G57 MC2", "OpenGL ES 3.2 v1.r38p1", 2400, 1080, "391"),
-    ("OPPO CPH2591", 2400, 8, 7680, "Adreno (TM) 610", "OpenGL ES 3.2 V@0615.80", 2400, 1080, "394"),
-    ("OnePlus CPH2467", 2200, 8, 7710, "Adreno (TM) 619", "OpenGL ES 3.2 V@0530.54", 2400, 1080, "391"),
-    ("OnePlus CPH2585", 2800, 8, 11520, "Adreno (TM) 735", "OpenGL ES 3.2 V@0744.10", 2412, 1080, "394"),
-    ("motorola moto g54 5G", 2200, 8, 7640, "IMG BXM-8-256", "OpenGL ES 3.2 build 1.15", 2400, 1080, "405"),
-    ("TECNO KJ6", 2200, 8, 7510, "Mali-G57 MC2", "OpenGL ES 3.2 v1.r38p1", 2460, 1080, "396"),
-    ("Infinix X6833B", 2200, 8, 7530, "Mali-G57 MC2", "OpenGL ES 3.2 v1.r38p1", 2460, 1080, "396"),
-    ("HONOR LGN-LX2", 2400, 8, 7659, "Adreno (TM) 610", "OpenGL ES 3.2 V@0615.98", 1610, 720, "272"),
-    ("iQOO I2218", 2800, 8, 7790, "Adreno (TM) 730", "OpenGL ES 3.2 V@0676.42", 2400, 1080, "395"),
-    ("POCO 2311DRK48I", 3100, 8, 11680, "Mali-G615 MC6", "OpenGL ES 3.2 v1.r44p0", 2712, 1220, "446"),
+BD_DEVICES = [
+    ("Xiaomi 2312DRAABI", "Grameenphone", "Dhaka"),
+    ("samsung SM-A155F", "Robi", "Chattogram"),
+    ("realme RMX3830", "Banglalink", "Sylhet"),
+    ("vivo V2310", "Grameenphone", "Rajshahi"),
+    ("OPPO CPH2565", "Airtel", "Khulna"),
 ]
 
-ANDROID_OS_POOL = [
-    ("12", "31", "SP1A.210812.016"),
-    ("13", "33", "TP1A.220624.014"),
-    ("14", "34", "UP1A.231005.007"),
-    ("15", "35", "AP3A.241005.015"),
+IND_DEVICES = [
+    ("samsung SM-A155F", "airtel", "Coimbatore"),
+    ("Xiaomi 22101316I", "Jio", "Mumbai"),
+    ("realme RMX3760", "airtel", "Delhi"),
+    ("vivo V2247", "Vi", "Kolkata"),
+    ("OnePlus CPH2467", "Jio", "Bengaluru"),
 ]
-
-BD_CARRIERS = ["Grameenphone", "Robi", "Banglalink", "airtel", "Teletalk"]
-IND_CARRIERS = ["Jio", "airtel", "Vi", "BSNL"]
-
-BD_LOCATIONS = [
-    ("Dhaka", "C"), ("Chattogram", "B"), ("Sylhet", "G"),
-    ("Rajshahi", "E"), ("Khulna", "D"), ("Barishal", "A"),
-    ("Rangpur", "F"), ("Mymensingh", "H"), ("Cumilla", "B"),
-]
-
-IND_LOCATIONS = [
-    ("Mumbai", "MH"), ("Delhi", "DL"), ("Bengaluru", "KA"),
-    ("Kolkata", "WB"), ("Chennai", "TN"), ("Coimbatore", "TN"),
-    ("Hyderabad", "TG"), ("Pune", "MH"), ("Ahmedabad", "GJ"),
-    ("Jaipur", "RJ"), ("Lucknow", "UP"),
-]
-
-_device_pick_lock = threading.Lock()
-_used_device_models = set()
-
-
-def _pick_unique_device():
-    with _device_pick_lock:
-        avail = [d for d in DEVICE_POOL if d[0] not in _used_device_models]
-        if not avail:
-            _used_device_models.clear()
-            avail = list(DEVICE_POOL)
-        chosen = random.choice(avail)
-        _used_device_models.add(chosen[0])
-        return chosen
-
-
-def _generate_device_profile(region):
-    reg = str(region or "BD").upper()
-    model, base_freq, cores, base_ram, gpu, ogl, w, h, dpi = _pick_unique_device()
-    os_ver, api_lvl, build_prefix = random.choice(ANDROID_OS_POOL)
-    build_suffix = f"{random.randint(100000, 999999)}.{random.randint(10, 99)}"
-    os_str = f"Android OS {os_ver} / API-{api_lvl} ({build_prefix}/{build_suffix})"
-
-    ram_mb = base_ram + random.randint(-120, 180)
-    freq = base_freq + random.choice([-100, 0, 100, 200])
-    cpu_str = f"ARM64 FP ASIMD AES | {freq} | {cores}"
-    model_variant = model if random.random() < 0.6 else f"{model} {random.choice(['5G', 'Pro', 'Plus', 'Global'])}"
-
-    if reg in ("IND", "IN"):
-        carrier = random.choice(IND_CARRIERS)
-        city, state = random.choice(IND_LOCATIONS)
-    else:
-        carrier = random.choice(BD_CARRIERS)
-        city, state = random.choice(BD_LOCATIONS)
-
-    net_type = random.choice(["2G", "3G", "4G", "5G"])
-
-    return {
-        "model": model_variant,
-        "os_str": os_str,
-        "cpu_str": cpu_str,
-        "cores": cores,
-        "ram_mb": ram_mb,
-        "gpu": gpu,
-        "ogl": f"{ogl} (GIT@{uuid.uuid4().hex[:10]}, {random.randint(1700000000, 1760000000)})",
-        "w": w,
-        "h": h,
-        "dpi": dpi,
-        "carrier": carrier,
-        "net_type": net_type,
-        "city": city,
-        "state": state,
-    }
 
 
 def generate_random_ip(region):
@@ -547,34 +448,31 @@ def xc4_perfect_invite_pkt(bot_uid, target_uid, key, iv, region="BD", badge_valu
     return xc4_generate_pk(raw, p_type, key, iv)
 
 
-# ================== Version (Live Game Version Checker) ==================
+# ================== Version ==================
 def zahid_update_version():
     global login_url, ob, verr, host
-    live_gp_ver = None
     try:
         from google_play_scraper import app as gp
         d = gp("com.dts.freefireth", lang="hi", country="id")
-        live_gp_ver = d.get("version")
+        version = d["version"]
     except Exception:
-        live_gp_ver = None
-
-    query_ver = live_gp_ver or "1.132.9"
+        version = "1.132.9"
     try:
         x = requests.get(
             "https://version.ggwhitehawk.com/live/ver.php"
-            f"?version={query_ver}&lang=en&device=android&channel=android"
+            f"?version={version}&lang=en&device=android&channel=android"
             f"&appstore=googleplay&region=BD&whitelist_version=1.3.0"
             f"&whitelist_sp_version=1.0.0",
             timeout=10,
         ).json()
         login_url = x["server_url"]
-        ob = x.get("latest_release_version") or ob or "OB55"
-        verr = x.get("remote_version") or live_gp_ver or verr
+        ob = x.get("latest_release_version") or "OB55"
+        verr = x.get("remote_version") or "1.134.14"
         host = login_url.split("https://", 1)[1].split("/", 1)[0]
     except Exception:
         login_url = LOGIN_SERVERS[0]
-        ob = ob or "OB55"
-        verr = live_gp_ver or verr or "1.134.21"
+        ob = "OB55"
+        verr = "1.134.14"
         host = "loginbp.ppmainecoonghj.com"
     return login_url, ob, verr
 
@@ -582,121 +480,84 @@ def zahid_update_version():
 login_url, ob, verr = zahid_update_version()
 
 
-# ================== MajorLogin Payload (লাইভ ভার্সন + প্রতি অ্যাকাউন্টে র‍্যান্ডম ডিভাইস/IP/UUID) ==================
+# ================== MajorLogin Payload (প্রতি অ্যাকাউন্টে র‍্যান্ডম IP ও UUID) ==================
 def zahid_build_login_payload(open_id, access_token, region="BD"):
-    global verr
     try:
         r = requests.head("https://www.google.com", timeout=3)
         sd = r.headers.get("Date")
         if sd:
+            from datetime import timezone as _tz
             dt = datetime.strptime(sd, "%a, %d %b %Y %H:%M:%S GMT")
-            server_time_str = dt.replace(tzinfo=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+            server_time_str = dt.replace(tzinfo=_tz.utc).strftime("%Y-%m-%d %H:%M:%S")
         else:
-            server_time_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+            server_time_str = str(datetime.now())[:-7]
     except Exception:
-        server_time_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-
-    if not verr:
-        zahid_update_version()
-    c_ver = str(verr)
+        server_time_str = str(datetime.now())[:-7]
 
     reg = str(region or "BD").upper()
+    c_ver = verr or "1.134.14"
     rand_ip = generate_random_ip(reg)
     rand_gaid = f"Google|{uuid.uuid4()}"
-    dev = _generate_device_profile(reg)
     P = {}
 
     if reg in ("IND", "IN"):
-        # Free Fire India (com.garena.game.ffi) 1.134+ রিয়েল পেলোড কাঠামো
-        P[3] = server_time_str
-        P[4] = "free fire"
-        P[5] = 1
-        P[7] = c_ver
-        P[8] = dev["os_str"]
-        P[9] = "Handheld"
-        P[10] = dev["carrier"]
-        P[11] = "CarrierDataNetwork"
-        P[12] = dev["w"]
-        P[13] = dev["h"]
-        P[14] = dev["dpi"]
-        P[15] = dev["cpu_str"]
-        P[16] = dev["ram_mb"]
-        P[17] = dev["gpu"]
-        P[18] = dev["ogl"]
-        P[19] = rand_gaid
-        P[20] = rand_ip
-        P[21] = "en"
-        P[22] = str(open_id)
-        P[23] = "4"
-        P[24] = "Handheld"
-        P[25] = dev["model"]
-        P[26] = "IND"
-        P[29] = str(access_token)
-        P[30] = 1
-        P[41] = dev["carrier"]
-        P[42] = dev["net_type"]
-        P[57] = "7428b253defc164018c604a1ebbfebdf"
-        P[60] = 105308; P[61] = 75531; P[62] = 2425
-        P[64] = 75659; P[65] = 105308; P[66] = 75659; P[67] = 105308
-        P[73] = 3
-        P[74] = "/data/app/~~TLO6Vcw_gTgruDm7-RlXBw==/com.garena.game.ffi-xLdrCd1_-yHt8gZWu5hoYw==/lib/arm64"
-        P[76] = 3
-        P[77] = "dd9d4c174e0472d34b7fd34bd5924bc9|/data/app/~~TLO6Vcw_gTgruDm7-RlXBw==/com.garena.game.ffi-xLdrCd1_-yHt8gZWu5hoYw==/base.apk"
-        P[78] = 3; P[79] = 2; P[81] = "64"; P[83] = "2019121269"
-        P[86] = "OpenGLES2"; P[87] = 4095; P[88] = 4
-        P[90] = dev["city"]; P[91] = dev["state"]; P[92] = 8897; P[93] = "android"
-        P[94] = "KqsHTzNiRBibVjNcGNyZiS2K+d83BZxlbnqPciwgenlSwqtcZ2tN41WqMEhyDPAyDnZiLxX+kqivCiDG+/0Kc99eX9igmh0ITnM4rl7BebkGvN5r"
-        P[95] = 111207; P[96] = '{"cur_rate":[60,90,120],"support_etc2":false}'
-        P[97] = 1; P[99] = "0"; P[100] = "4"; P[102] = ""
-        P[104] = 90605; P[105] = 1
-        P[106] = "https://dl-tata.freefireind.in/live/ABHotUpdates/|https://core-tata.freefireind.in/live/ABHotUpdates/|ac2c27398b1d5d95a4b6b6e04fa94066"
-        P[107] = "1.1686d744a88f55b9"
+        dev_model, carrier, city = random.choice(IND_DEVICES)
+        P[3]=server_time_str; P[4]="free fire"; P[5]=1; P[7]=c_ver
+        P[8]="Android OS 14 / API-34 (UP1A.231005.007/E156BXXS6AYD4)"
+        P[9]="Handheld"; P[10]=carrier; P[11]="CarrierDataNetwork"
+        P[12]=2340; P[13]=1080; P[14]="295"
+        P[15]="ARM64 FP ASIMD AES | 2200 | 8"; P[16]=5586
+        P[17]="Mali-G57 MC2"; P[18]="OpenGL ES 3.2 v1.r38p1"
+        P[19]=rand_gaid
+        P[20]=rand_ip; P[21]="en"; P[22]=str(open_id); P[23]="4"
+        P[24]="Handheld"; P[25]=dev_model; P[26]="IND"
+        P[29]=str(access_token); P[30]=1; P[41]=carrier; P[42]="4G"
+        P[57]="7428b253defc164018c604a1ebbfebdf"
+        P[60]=108009; P[61]=3859; P[62]=5023
+        P[64]=3987; P[65]=108009; P[66]=3987; P[67]=108009
+        P[70]=4; P[73]=3
+        P[74]="/data/app/~~OlJmIW-Yzl-44x2WnJP4Nw==/com.garena.game.ffi-_eDk_pQQMiFk1YUeqwJBvQ==/lib/arm64"
+        P[76]=3
+        P[77]="dd9d4c174e0472d34b7fd34bd5924bc9|/data/app/~~OlJmIW-Yzl-44x2WnJP4Nw==/com.garena.game.ffi-_eDk_pQQMiFk1YUeqwJBvQ==/base.apk"
+        P[78]=3; P[79]=2; P[81]="64"; P[83]="2019121269"
+        P[85]=3; P[86]="OpenGLES2"; P[87]=8191; P[88]=4
+        P[90]=city; P[91]="TN"; P[92]=9570; P[93]="android"
+        P[94]="KqsHT54jON6bxITmlrRyOrXWBqKqZ4BoqPzT/mhtriAfRt2dt7gC8pnAJfj11alcEUA5sD8BshSYQhxXT9RFmU6YzcI1FKK4MwxJcF4+kvelPD1H"
+        P[95]=111207; P[96]='{"cur_rate":null,"support_etc2":false}'
+        P[97]=1; P[99]="4"; P[100]="4"; P[104]=11921; P[105]=1
+        P[106]="https://dl-tata.freefireind.in/live/ABHotUpdates/|https://core-tata.freefireind.in/live/ABHotUpdates/|dff941d41e6e3a9e76f05ed71fdc8d87"
+        P[107]="1.6168622e0868ddbd"
     else:
-        # Bangladesh / Global (com.dts.freefireth) রিয়েল পেলোড কাঠামো
-        P[3] = server_time_str
-        P[4] = "free fire"
-        P[5] = 1
-        P[7] = c_ver
-        P[8] = dev["os_str"]
-        P[9] = "Handheld"
-        P[10] = dev["carrier"]
-        P[11] = "CarrierDataNetwork"
-        P[12] = dev["w"]
-        P[13] = dev["h"]
-        P[14] = dev["dpi"]
-        P[15] = dev["cpu_str"]
-        P[16] = dev["ram_mb"]
-        P[17] = dev["gpu"]
-        P[18] = dev["ogl"]
-        P[19] = rand_gaid
-        P[20] = rand_ip
-        P[21] = "en"
-        P[22] = str(open_id)
-        P[23] = str(dev["cores"])
-        P[24] = "Handheld"
-        P[25] = dev["model"]
-        P[26] = reg
-        P[29] = str(access_token)
-        P[30] = 1
-        P[41] = dev["carrier"]
-        P[42] = dev["net_type"]
-        P[57] = "7428b253defc164018c604a1ebbfebdf"
-        P[60] = 105308; P[61] = 75488; P[62] = 2425
-        P[64] = 75616; P[65] = 105308; P[66] = 75616; P[67] = 105308
-        P[73] = 2
-        P[74] = "/data/app/~~vedwAbbHwtiShSYZg7WYSg==/com.dts.freefireth-wUl0d9zHDdl9ByuesHW2xQ==/lib/arm64"
-        P[76] = 1
-        P[77] = "b8e0cd5e295eee42f5860d3c86e483dd|/data/app/~~vedwAbbHwtiShSYZg7WYSg==/com.dts.freefireth-wUl0d9zHDdl9ByuesHW2xQ==/base.apk"
-        P[78] = 3; P[79] = 2; P[81] = "64"; P[83] = "2019121229"
-        P[85] = 3; P[86] = "OpenGLES2"; P[87] = 4095; P[88] = dev["cores"]
-        P[90] = dev["city"]; P[91] = dev["state"]; P[92] = 9894; P[93] = "android"
-        P[94] = "KqsHTyIAg2nsdXQJG9ZBjCfcFjjDoOb1C59Bwqrenj6GFhBOMHfx+h4ZWs4j90X1NsFC7TB8XylqKxNUDpL2iQ4IhC8wTdLrDY/ZFS7iL+tDRgLP"
-        P[95] = 111207; P[96] = '{"cur_rate":[60,90,120],"support_etc2":false}'
-        P[97] = 1; P[99] = "0"; P[100] = str(dev["cores"])
-        P[102] = "JUDBY[XV8"; P[103] = 1
-        P[104] = 6297; P[105] = 1
-        P[106] = "https://dl-bs.ggpolarbear.com/live/ABHotUpdates/|https://core-bs.ggpolarbear.com/live/ABHotUpdates/|ac2c27398b1d5d95a4b6b6e04fa94066"
-        P[107] = "1.7808b26c4b1c200c"
+        dev_model, carrier, city = random.choice(BD_DEVICES)
+        P[3]=server_time_str; P[4]="free fire"; P[5]=1; P[7]=c_ver
+        P[8]="Android OS 14 / API-34 (UP1A.231005.007/V816.0.15.0.UNQMIXM)"
+        P[9]="Handheld"; P[10]=carrier; P[11]="CarrierDataNetwork"
+        P[12]=1666; P[13]=750; P[14]="352"
+        P[15]="ARM64 FP ASIMD AES | 2400 | 8"; P[16]=5563
+        P[17]="Mali-G57 MC2"
+        P[18]="OpenGL ES 3.2 v1.r32p1-01eac0.0a0b917d9265b4c01be9925306306139"
+        P[19]=rand_gaid
+        P[20]=rand_ip; P[21]="en"; P[22]=str(open_id); P[23]="8"
+        P[24]="Handheld"; P[25]=dev_model; P[26]=reg
+        P[29]=str(access_token); P[30]=1; P[41]=carrier; P[42]="Cellular"
+        P[57]="7428b253defc164018c604a1ebbfebdf"
+        P[60]=109685; P[61]=58294; P[62]=797; P[63]=18000
+        P[64]=58818; P[65]=109685; P[66]=58818; P[67]=109685
+        P[73]=2
+        P[74]="/data/app/~~cqQgpdMykLQEM3odipXatw==/com.dts.freefireth-G6e5yOt1dtuXG5Ambhj18g==/lib/arm64"
+        P[76]=1
+        P[77]="b8e0cd5e295eee42f5860d3c86e483dd|/data/app/~~cqQgpdMykLQEM3odipXatw==/com.dts.freefireth-G6e5yOt1dtuXG5Ambhj18g==/base.apk"
+        P[78]=3; P[79]=2; P[81]="64"; P[83]="2019121229"
+        P[85]=3; P[86]="OpenGLES2"; P[87]=4095; P[88]=8
+        P[89]=b"FwQVTgUPX1UaUllDDwcWCRBpWAUOUgsvA1snWlBaO1kFYg=="
+        P[90]=city; P[91]="C"; P[92]=8043; P[93]="android"
+        P[94]="KqsHT4XbSZhqerDNUhjbS3DxG/4+I62zQU2tZFJN91kBUICAlZ5yujshLKvjlk/KiShfKfis8EeB1PMhFHIodWPncZC4fCHYF3TcTwNj95aWY/S3"
+        P[95]=111207; P[96]='{"cur_rate":[60,90,120],"support_etc2":false}'
+        P[97]=1; P[98]=1; P[99]="4"; P[100]="4"
+        P[102]="GQ]        e"; P[103]=1
+        P[104]=45174; P[105]=1
+        P[106]="https://dl-bs.ggpolarbear.com/live/ABHotUpdates/|https://core-bs.ggpolarbear.com/live/ABHotUpdates/|a4332cb1c1a84e51dd77441e4856ed5a"
+        P[107]="1.9393e7b8e53e8aeb"
 
     proto_encoded = zahid_proto_encode(P)
     return AES.new(zahid_key, AES.MODE_CBC, zahid_iv).encrypt(pad(proto_encoded, 16)), rand_ip
@@ -937,7 +798,7 @@ def zahid_load_saved_tokens(region):
 
 def zahid_upsert_single_token(sess):
     path = get_token_file(sess.get('region', 'BD'))
-    with file_lock:
+    with lock:
         data = {'saved_at': datetime.now().isoformat(), 'count': 0, 'sessions': []}
         if os.path.exists(path):
             try:
@@ -1366,6 +1227,7 @@ def zahid_run_session(sess, gen_stop_event):
                 with lock:
                     console.print(f"[cyan][{tag}] C{cycle_num} JOIN->{target_uid}[/cyan]")
 
+                # জয়েন করার পর বাফার একটু ক্লিয়ার করে নেওয়া
                 sock_online, last_ka = _wait_online(
                     sock_online, rx_buf, 0.12, key, iv, region, last_ka, gen_stop_event
                 )
@@ -1523,8 +1385,8 @@ def zahid_load_all():
     for region, fp in RAF.items():
         items = [(u, p, region) for u, p in zahid_load_file(fp)]
         if not items:
-            for u, _ in zahid_load_saved_tokens(region).items():
-                items.append((u, None, region))
+            for u, s in zahid_load_saved_tokens(region).items():
+                items.append((u, None, s.get('region', region)))
         all_.extend(items)
     random.shuffle(all_)
     return all_
@@ -1533,7 +1395,7 @@ def zahid_load_all():
 # ================== Session Prep Helper ==================
 def zahid_prepare_sessions(accs, use_saved=True):
     saved_by_region = {
-        reg: zahid_load_saved_tokens(reg)
+        reg: (zahid_load_saved_tokens(reg) if use_saved else {})
         for reg in RAF.keys()
     }
 
@@ -1563,7 +1425,7 @@ def zahid_prepare_sessions(accs, use_saved=True):
                 uid_str = str(uid)
                 reg_saved = saved_by_region.get(region, {})
 
-                if (use_saved or not pwd) and uid_str in reg_saved:
+                if use_saved and uid_str in reg_saved:
                     cand = reg_saved[uid_str]
                     cand['password'] = pwd
                     if not cand.get('client_ip'):
@@ -1573,18 +1435,15 @@ def zahid_prepare_sessions(accs, use_saved=True):
                             ready_sessions.append(cand)
                         with stats_lock:
                             stats['reused'] += 1
-                        with lock:
-                            console.print(f"[green][{region}] {uid_str} REUSED -> {cand['bot_uid']} (IP:{cand['client_ip']})[/green]")
+                        console.print(f"[green][{region}] {uid_str} REUSED -> {cand['bot_uid']} (IP:{cand['client_ip']})[/green]")
                         continue
                     else:
-                        with lock:
-                            console.print(f"[yellow][{region}] {uid_str} EXPIRED -> rebuild[/yellow]")
+                        console.print(f"[yellow][{region}] {uid_str} EXPIRED -> rebuild[/yellow]")
 
                 if not pwd:
                     with stats_lock:
                         stats['failed'] += 1
-                    with lock:
-                        console.print(f"[red][{region}] {uid_str} NO_PASS[/red]")
+                    console.print(f"[red][{region}] {uid_str} NO_PASS[/red]")
                     continue
 
                 sess = zahid_build_session(uid_str, pwd, region)
@@ -1594,18 +1453,15 @@ def zahid_prepare_sessions(accs, use_saved=True):
                         ready_sessions.append(sess)
                     with stats_lock:
                         stats['built'] += 1
-                    with lock:
-                        console.print(f"[green][{region}] {uid_str} NEW -> {sess['bot_uid']} (IP:{sess['client_ip']})[/green]")
+                    console.print(f"[green][{region}] {uid_str} NEW -> {sess['bot_uid']} (IP:{sess['client_ip']})[/green]")
                 else:
                     with stats_lock:
                         stats['failed'] += 1
-                    with lock:
-                        console.print(f"[red][{region}] {uid_str} FAIL[/red]")
+                    console.print(f"[red][{region}] {uid_str} FAIL[/red]")
             except Exception as e:
                 with stats_lock:
                     stats['failed'] += 1
-                with lock:
-                    console.print(f"[red][{region}] {uid} err:{type(e).__name__}[/red]")
+                console.print(f"[red][{region}] {uid} err:{type(e).__name__}[/red]")
             finally:
                 acc_queue.task_done()
 
@@ -1628,7 +1484,6 @@ def zahid_main():
     first_run = True
 
     while not RF:
-        zahid_update_version()
         accs = zahid_load_all()
         if not accs:
             console.print("[red]No accounts in accounts.txt / accounts_ind.txt[/red]")
@@ -1636,10 +1491,7 @@ def zahid_main():
 
         bd_cnt = sum(1 for _, _, r in accs if r == "BD")
         ind_cnt = sum(1 for _, _, r in accs if r == "IND")
-        console.print(
-            f"[green]Loaded -> BD:{bd_cnt} | IND:{ind_cnt} | Ver:{verr} ({ob}) | "
-            f"Bundles:{len(BUNDLE_IDS)} | Emotes:{len(EMOTE_IDS)}[/green]"
-        )
+        console.print(f"[green]Loaded -> BD:{bd_cnt} | IND:{ind_cnt} | Bundles:{len(BUNDLE_IDS)} | Emotes:{len(EMOTE_IDS)}[/green]")
 
         has_any_pw = any(pwd for _, pwd, _ in accs)
         use_saved = first_run or (not has_any_pw)
